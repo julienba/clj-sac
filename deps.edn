@@ -1,0 +1,21 @@
+{:paths ["src"]
+ :deps
+ {;; core
+  org.clojure/clojure {:mvn/version "1.12.0"}
+  org.clojure/core.async {:mvn/version "1.6.673"}
+
+  ; utils
+  funcool/promesa {:mvn/version "11.0.678"}
+  metosin/malli {:mvn/version "0.17.0"}
+  cheshire/cheshire {:mvn/version "5.13.0"}
+  hato/hato {:mvn/version "1.0.0"}
+
+  ;; logging
+  ch.qos.logback/logback-classic {:mvn/version "1.4.5"}
+
+  ;; Dev => to move somewhere else
+  djblue/portal {:mvn/version "0.59.1"}
+ }
+
+ :aliases
+ {}}
