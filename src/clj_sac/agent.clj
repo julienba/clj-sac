@@ -99,14 +99,14 @@
 
   (observe [_this]
     ;; Observe: Get user input or continue with existing conversation
-    (if-let [user-input user-prompt]
-      ;; New user input
+    (if (and user-prompt (empty? (rest conversation)))
+      ;; Only use user-prompt if this is the first iteration (only system message exists)
       (do
-        (log/info :line user-input)
+        (log/info :line user-prompt)
         {:type :user-input
-         :content user-input
+         :content user-prompt
          :timestamp (System/currentTimeMillis)})
-      ;; No new input, but continue with conversation if the last message is a tool message
+      ;; Continue with conversation if the last message is a tool message
       (when (and (seq conversation)
                  (= (:role (last conversation)) "tool"))
         {:type :continue-conversation
@@ -163,32 +163,34 @@
   (log/info (str "Max memory: " (:max-memory agent) " messages"))
   (loop [current-agent agent
          iteration 0]
-    (Thread/sleep 500) ; Slow things down in case to prevent a infinit loop to spam the LLM provider
+    (Thread/sleep 1000) ; Slow things down in case to prevent a infinit loop to spam the LLM provider
 
     ;; Check iteration limit
-    (when (>= iteration (:max-iterations current-agent))
-      (log/warn (str "Reached maximum iterations (" (:max-iterations current-agent) "). Stopping."))
-      (reduced nil))
-
-    ;; OBSERVE
-    (when-let [observations (observe current-agent)]
-      (log/info (str "OBSERVE: " (:type observations)
-                    (when (= (:type observations) :user-input)
-                      (str " - " (:content observations)))))
-      ;; ORIENT
-      (when-let [situation (orient current-agent observations)]
-        (log/info (str "ORIENT: ready-for-inference=" (:ready-for-inference situation)))
-        ;; DECIDE
-        (when-let [decision (decide current-agent situation)]
-          (log/info (str "DECIDE: type=" (:type decision)))
-          ;; ACT
-          (let [result (act current-agent decision)]
-            (log/info (str "ACT: continue=" (:continue result) " (iteration " (inc iteration) ")"))
-            (when (:continue result)
-              ;; Apply memory management to conversation
-              (let [truncated-conversation (truncate-conversation (:conversation result) (:max-memory current-agent))
-                    updated-agent (assoc current-agent :conversation truncated-conversation)]
-                (recur updated-agent (inc iteration))))))))))
+    (if (>= iteration (:max-iterations current-agent))
+      (do
+        (log/warn (str "Reached maximum iterations (" (:max-iterations current-agent) "). Stopping."))
+        nil)
+      ;; OBSERVE
+      (when-let [observations (observe current-agent)]
+        (log/info (str "OBSERVE: " (:type observations)
+                      (when (= (:type observations) :user-input)
+                        (str " - " (:content observations)))))
+        ;; ORIENT
+        (when-let [situation (orient current-agent observations)]
+          (log/info (str "ORIENT: ready-for-inference=" (:ready-for-inference situation)))
+          ;; DECIDE
+          (when-let [decision (decide current-agent situation)]
+            (log/info (str "DECIDE: type=" (:type decision)))
+            ;; ACT
+            (let [result (act current-agent decision)]
+              (log/info (str "ACT: continue=" (:continue result) " (iteration " (inc iteration) ")"))
+              (when (:continue result)
+                ;; Apply memory management to conversation and clear user-prompt after first use
+                (let [truncated-conversation (truncate-conversation (:conversation result) (:max-memory current-agent))
+                      updated-agent (assoc current-agent
+                                          :conversation truncated-conversation
+                                          :user-prompt nil)] ; Clear user-prompt after first use
+                  (recur updated-agent (inc iteration)))))))))))
 
 (defn start-agent
   "Start the OODA loop agent with default model"
@@ -205,7 +207,6 @@
 ;; Example usage
 (comment
   ;; Start the agent with default model and limits
-  ;(set-user-prompt "Write me an haiku")
   (start-agent {:user-prompt "Add a function `addition` in src/clj_sac/core.clj. This function should make an addition with 2 numbers."})
   (start-agent {:user-prompt "Write a simple 'Hello World' program in Python and save it to hello.py"})
 
