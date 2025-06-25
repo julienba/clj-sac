@@ -110,11 +110,6 @@
   (decide [this situation] "Determine the best course of action")
   (act [this decision] "Execute the decision"))
 
-(def user-prompt (atom nil))
-
-(defn set-user-prompt [prompt]
-  (reset! user-prompt prompt))
-
 (defn decide-impl [model situation]
   (log/info :decide-impl situation)
   (when (:ready-for-inference situation)
@@ -137,27 +132,15 @@
                   (ex-data e)
                   (.getMessage e))}))))
 
-
-;; (mistral/chat-completion
-;;  {:messages [{:role "system",
-;;               :content
-;;               "You are a helpful coding assistant with access to file operations.\n                               When you need to read files, edit files, or list directories, use the available tools.\n                               Always explain what you're doing before using tools.\n                               For file edits, be precise with the old_str parameter - it must match exactly what's in the file."}
-;;              {:role "user", :content "write me an haiku"}]
-;;   :model "mistral-large-latest"
-;;   :tools []
-;;   :temperature 0.7}
-;;  {:headers {"Authorization" (str "Bearer " mistral/TOKEN)}})
-
-(defrecord Agent [conversation model]
+(defrecord Agent [conversation model user-prompt]
   OODALoop
 
   (observe [_this]
     ;; Observe: Get user input or continue with existing conversation
-    (if-let [user-input @user-prompt]
+    (if-let [user-input user-prompt]
       ;; New user input
       (do
         (log/info :line user-input)
-        (reset! user-prompt nil)
         {:type :user-input
          :content user-input
          :timestamp (System/currentTimeMillis)})
@@ -242,7 +225,7 @@
       {:conversation conversation
        :continue false})))
 
-(def system-prompt
+(def default-system-prompt
   "You are a helpful coding assistant with access to file operations.
    When you need to read files, edit files, or list directories, use the available tools.
    Always explain what you're doing before using tools.
@@ -250,10 +233,10 @@
 
 (defn create-agent
   "Create a new OODA loop agent with initial system message"
-  [model]
+  [model system-prompt user-prompt]
   (let [system-message {:role "system"
                         :content system-prompt}]
-    (->Agent [system-message] model)))
+    (->Agent [system-message] model user-prompt)))
 
 (defn run-ooda-loop
   "Main OODA loop execution"
@@ -261,7 +244,7 @@
   (log/info "OODA Loop Agent started (Ctrl+C to quit)")
   (log/info "Using Mistral model for decisions")
   (loop [current-agent agent]
-    (Thread/sleep 2000)
+    (Thread/sleep 1000) ; Slow things down in case to prevent a infinit loop to spam the LLM provider
     ;; OBSERVE
     (when-let [observations (observe current-agent)]
       (log/info (str "OBSERVE: " (:type observations)
@@ -281,21 +264,17 @@
 
 (defn start-agent
   "Start the OODA loop agent with default model"
-  ([]
-   (start-agent "mistral-large-latest"))
-  ([model]
-   (if mistral/TOKEN
-     (let [agent (create-agent model)]
-       (run-ooda-loop agent))
-     (log/error "Error: WF_MISTRAL_KEY environment variable not set"))))
+  [{:keys [model system-prompt user-prompt]
+    :or {model "mistral-large-latest"
+         system-prompt default-system-prompt}}]
+  (if mistral/TOKEN
+    (let [agent (create-agent model system-prompt user-prompt)]
+      (run-ooda-loop agent))
+    (log/error "Error: WF_MISTRAL_KEY environment variable not set")))
 
 ;; Example usage
 (comment
   ;; Start the agent with default model
   ;(set-user-prompt "Write me an haiku")
-  (set-user-prompt "Add a function `addition` in src/clj_sac/core.clj. This function should make an addition with 2 numbers.")
-  (set-user-prompt "Write a simple 'Hello World' program in Python and save it to hello.py")
-  (start-agent)
-
-  ;; Or with specific model
-  (start-agent "mistral-medium-latest"))
+  (start-agent {:user-prompt "Add a function `addition` in src/clj_sac/core.clj. This function should make an addition with 2 numbers."})
+  (start-agent {:user-prompt "Write a simple 'Hello World' program in Python and save it to hello.py"}))

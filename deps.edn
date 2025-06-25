@@ -15,8 +15,9 @@
   ch.qos.logback/logback-classic {:mvn/version "1.4.5"}
 
   ;; Dev => to move somewhere else
-  djblue/portal {:mvn/version "0.59.1"}
- }
+  djblue/portal {:mvn/version "0.59.1"}}
 
  :aliases
- {}}
+ {:test {:extra-paths ["test"]
+         :extra-deps {lambdaisland/kaocha {:mvn/version "1.87.1366"}}
+         :main-opts ["-m" "kaocha.runner"]}}}

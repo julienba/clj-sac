@@ -106,20 +106,3 @@
                                                       :response-schema CompletionResponse}}
                                            http-opts))))
 
-
-;; (defn stream-chat-completion
-;;   [{:keys [api-key messages tools model response-format completions-url]
-;;     :or {model "gpt-4o-mini"
-;;          completions-url openai-completions-url}}]
-;;   (:body (request/sse-request {:request {:url completions-url
-;;                                          :headers {"Authorization" (str "Bearer " api-key)
-;;                                                    "Content-Type" "application/json"}
-
-;;                                          :method :post
-;;                                          :body (u/json-str (cond-> {:messages messages
-;;                                                                     :stream true
-;;                                                                     :response_format response-format
-;;                                                                     :model model}
-;;                                                              (pos? (count tools)) (assoc :tools tools)))}
-;;                                :params {:stream/close? true}})))
-
