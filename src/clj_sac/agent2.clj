@@ -132,7 +132,7 @@
                   (ex-data e)
                   (.getMessage e))}))))
 
-(defrecord Agent [conversation model user-prompt]
+(defrecord Agent [conversation model user-prompt max-iterations max-memory]
   OODALoop
 
   (observe [_this]
@@ -231,20 +231,39 @@
    Always explain what you're doing before using tools.
    For file edits, be precise with the old_str parameter - it must match exactly what's in the file.")
 
+(defn truncate-conversation
+  "Keep only the last max-memory messages in the conversation, preserving the system message"
+  [conversation max-memory]
+  (if (<= (count conversation) max-memory)
+    conversation
+    (let [system-message (first conversation)
+          other-messages (rest conversation)
+          messages-to-keep (take-last (dec max-memory) other-messages)]
+      (cons system-message messages-to-keep))))
+
 (defn create-agent
   "Create a new OODA loop agent with initial system message"
   [model system-prompt user-prompt]
   (let [system-message {:role "system"
                         :content system-prompt}]
-    (->Agent [system-message] model user-prompt)))
+    (->Agent [system-message] model user-prompt 50 10)))
 
 (defn run-ooda-loop
   "Main OODA loop execution"
   [agent]
   (log/info "OODA Loop Agent started (Ctrl+C to quit)")
   (log/info "Using Mistral model for decisions")
-  (loop [current-agent agent]
-    (Thread/sleep 1000) ; Slow things down in case to prevent a infinit loop to spam the LLM provider
+  (log/info (str "Max iterations: " (:max-iterations agent)))
+  (log/info (str "Max memory: " (:max-memory agent) " messages"))
+  (loop [current-agent agent
+         iteration 0]
+    (Thread/sleep 500) ; Slow things down in case to prevent a infinit loop to spam the LLM provider
+
+    ;; Check iteration limit
+    (when (>= iteration (:max-iterations current-agent))
+      (log/warn (str "Reached maximum iterations (" (:max-iterations current-agent) "). Stopping."))
+      (reduced nil))
+
     ;; OBSERVE
     (when-let [observations (observe current-agent)]
       (log/info (str "OBSERVE: " (:type observations)
@@ -258,23 +277,38 @@
           (log/info (str "DECIDE: type=" (:type decision)))
           ;; ACT
           (let [result (act current-agent decision)]
-            (log/info (str "ACT: continue=" (:continue result)))
+            (log/info (str "ACT: continue=" (:continue result) " (iteration " (inc iteration) ")"))
             (when (:continue result)
-              (recur (assoc current-agent :conversation (:conversation result))))))))))
+              ;; Apply memory management to conversation
+              (let [truncated-conversation (truncate-conversation (:conversation result) (:max-memory current-agent))
+                    updated-agent (assoc current-agent :conversation truncated-conversation)]
+                (recur updated-agent (inc iteration))))))))))
 
 (defn start-agent
   "Start the OODA loop agent with default model"
-  [{:keys [model system-prompt user-prompt]
+  [{:keys [model system-prompt user-prompt max-iterations max-memory]
     :or {model "mistral-large-latest"
-         system-prompt default-system-prompt}}]
+         system-prompt default-system-prompt
+         max-iterations 50
+         max-memory 10}}]
   (if mistral/TOKEN
     (let [agent (create-agent model system-prompt user-prompt)]
-      (run-ooda-loop agent))
+      (run-ooda-loop (assoc agent :max-iterations max-iterations :max-memory max-memory)))
     (log/error "Error: WF_MISTRAL_KEY environment variable not set")))
 
 ;; Example usage
 (comment
-  ;; Start the agent with default model
+  ;; Start the agent with default model and limits
   ;(set-user-prompt "Write me an haiku")
   (start-agent {:user-prompt "Add a function `addition` in src/clj_sac/core.clj. This function should make an addition with 2 numbers."})
-  (start-agent {:user-prompt "Write a simple 'Hello World' program in Python and save it to hello.py"}))
+  (start-agent {:user-prompt "Write a simple 'Hello World' program in Python and save it to hello.py"})
+
+  ;; Start the agent with custom limits
+  (start-agent {:user-prompt "Complex task requiring many steps"
+                :max-iterations 100
+                :max-memory 20})
+
+  ;; Start the agent with minimal limits for simple tasks
+  (start-agent {:user-prompt "Simple task"
+                :max-iterations 10
+                :max-memory 5}))

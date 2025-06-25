@@ -34,16 +34,15 @@
         (when (.exists (io/file test-file))
           (io/delete-file test-file))
 
-        (let [agent (agent2/create-agent "mistral-large-latest" agent2/default-system-prompt "Write a simple 'Hello World' program in Python and save it to hello.py")]
-          ;; Run one OODA loop iteration manually
-          (let [obs (agent2/observe agent)
-                situation (agent2/orient agent obs)
-                decision (agent2/decide agent situation)
-                result (agent2/act agent decision)]
-            (is (.exists (io/file test-file)) "hello.py should be created")
-            (is (= (str/trim (slurp test-file)) "print('Hello World')") "hello.py should contain Hello World Python code")
-            (is (:continue result) "Should continue after tool execution")))
-
+        (let [agent (agent2/create-agent "mistral-large-latest" agent2/default-system-prompt "Write a simple 'Hello World' program in Python and save it to hello.py")
+              ;; Run one OODA loop iteration manually
+              obs (agent2/observe agent)
+              situation (agent2/orient agent obs)
+              decision (agent2/decide agent situation)
+              result (agent2/act agent decision)]
+          (is (.exists (io/file test-file)) "hello.py should be created")
+          (is (= (str/trim (slurp test-file)) "print('Hello World')") "hello.py should contain Hello World Python code")
+          (is (:continue result) "Should continue after tool execution"))
         (finally
           ;; Clean up after test
           (when (.exists (io/file test-file))
