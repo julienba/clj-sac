@@ -1,107 +1,8 @@
 (ns clj-sac.agent
-  (:require
-   [clj-sac.llm.http.mistral :as mistral]
-   [clojure.data.json :as json]
-   [clojure.java.io :as io]
-   [clojure.string :as str]
-   [clojure.tools.logging :as log]))
-
-;; Tool definitions
-(def tools
-  [{:type "function"
-    :function {:name "read_file"
-               :description "Read the contents of a file"
-               :parameters {:type "object"
-                            :properties {:path {:type "string"
-                                                :description "The file path to read"}}
-                            :required ["path"]}}}
-   {:type "function"
-    :function {:name "edit_file"
-               :description "Edit a file by replacing old content with new content"
-               :parameters {:type "object"
-                            :properties {:path {:type "string"
-                                                :description "The file path to edit"}
-                                         :old_str {:type "string"
-                                                   :description "The old content to replace (empty string for new file)"}
-                                         :new_str {:type "string"
-                                                   :description "The new content to insert"}}
-                            :required ["path" "old_str" "new_str"]}}}
-   {:type "function"
-    :function {:name "list_directory"
-               :description "List files and directories in a given path"
-               :parameters {:type "object"
-                            :properties {:path {:type "string"
-                                                :description "The directory path to list"}}
-                            :required ["path"]}}}])
-
-;; Tool execution functions
-(defn read-file-tool [path]
-  (try
-    {:success true
-     :content (slurp path)}
-    (catch Exception e
-      {:success false
-       :error (.getMessage e)})))
-
-(defn get-current-directory []
-  (try
-    (.getCanonicalPath (io/file "."))
-    (catch Exception e
-      (str "Error getting current directory: " (.getMessage e)))))
-
-(get-current-directory)
-
-(defn edit-file-tool [path old-str new-str]
-  (try
-    (let [file (io/file path)]
-      (if (.exists file)
-        (if (str/blank? old-str)
-          ;; Append to existing file
-          (let [current-content (slurp file)
-                new-content (str current-content "\n" new-str)]
-            (spit path new-content)
-            {:success true
-             :message (str "Successfully appended to " path)})
-          ;; Replace specific content in existing file
-          (let [current-content (slurp file)
-                new-content (str/replace current-content old-str new-str)]
-            (spit path new-content)
-            {:success true
-             :message (str "Successfully edited " path)}))
-        ;; Create new file
-        (do
-          (io/make-parents file)
-          (spit path new-str)
-          {:success true
-           :message (str "Successfully created " path)})))
-    (catch Exception e
-      {:success false
-       :error (if (instance? clojure.lang.ExceptionInfo e)
-                (ex-message e)
-                (.getMessage e))})))
-
-(defn list-directory-tool [path]
-  (try
-    (let [dir (io/file path)]
-      (if (.exists dir)
-        {:success true
-         :files (->> (.listFiles dir)
-                     (map #(hash-map :name (.getName %)
-                                     :type (if (.isDirectory %) "directory" "file")))
-                     (sort-by :name))}
-        {:success false
-         :error (str "Directory does not exist: " path)}))
-    (catch Exception e
-      {:success false
-       :error (.getMessage e)})))
-
-(defn execute-tool [tool-name args]
-  (case tool-name
-    "read_file" (read-file-tool (:path args))
-    "edit_file" (edit-file-tool (:path args) (:old_str args) (:new_str args))
-    "list_directory" (list-directory-tool (:path args))
-    {:success false
-     :error (str "Unknown tool: " tool-name)}))
+  (:require [clj-sac.llm.http.mistral :as mistral]
+            [clj-sac.tool :as tool]
+            [clojure.data.json :as json]
+            [clojure.tools.logging :as log]))
 
 ;; OODA Loop Implementation
 (defprotocol OODALoop
@@ -110,14 +11,16 @@
   (decide [this situation] "Determine the best course of action")
   (act [this decision] "Execute the decision"))
 
-(defn decide-impl [model situation]
+(defn decide-impl
+  "Get LLM response with potential tool calls"
+  [model situation]
   (log/info :decide-impl situation)
   (when (:ready-for-inference situation)
     (try
       (let [response (mistral/chat-completion
                       {:messages (:conversation situation)
                        :model model
-                       :tools tools
+                       :tools tool/tools
                        :temperature 0.7}
                       {:headers {"Authorization" (str "Bearer " mistral/TOKEN)}})]
         (if (= 200 (:status response))
@@ -131,6 +34,65 @@
          :error (if (instance? clojure.lang.ExceptionInfo e)
                   (ex-data e)
                   (.getMessage e))}))))
+
+(defn act-impl
+  "Act: Process LLM response and execute any tool calls"
+  [decision conversation]
+  (case (:type decision)
+    :llm-response
+    (let [response (:response decision)
+          message (first (:choices response))
+          assistant-message (:message message)
+          tool-calls (:tool_calls assistant-message)]
+
+      (if tool-calls
+        ;; Execute tool calls
+        (let [tool-results (for [tool-call tool-calls]
+                             (let [function (:function tool-call)
+                                   tool-name (:name function)
+                                   args (json/read-str (:arguments function) :key-fn keyword)
+                                   result (tool/execute-tool tool-name args)]
+                               {:tool_call_id (:id tool-call)
+                                :result result}))
+
+              ;; Add assistant message to conversation
+              updated-conversation (conj (:conversation decision) assistant-message)
+
+              ;; Add tool results as tool messages
+              final-conversation (reduce (fn [conv tool-result]
+                                           (conj conv {:role "tool"
+                                                       :tool_call_id (:tool_call_id tool-result)
+                                                       :content (json/write-str (:result tool-result))}))
+                                         updated-conversation
+                                         tool-results)]
+
+          ;; Print tool execution summary
+          (doseq [tool-result tool-results]
+            (let [result (:result tool-result)]
+              (if (:success result)
+                (log/info (str "Tool executed successfully: "
+                               (or (:message result) "Operation completed")))
+                (log/error (str "Tool error: " (:error result))))))
+
+          ;; Return updated state for next iteration
+          {:conversation final-conversation
+           :continue true})
+
+        ;; No tool calls - just add assistant response and print it
+        (do
+          (log/info (str "LLM: " (:content assistant-message)))
+          {:conversation (conj (:conversation decision) assistant-message)
+           :continue true})))
+
+    :error
+    (do
+      (log/error (str "Error: " (:error decision)))
+      {:conversation (:conversation decision)
+       :continue true})
+
+    ;; Default case
+    {:conversation conversation
+     :continue false}))
 
 (defrecord Agent [conversation model user-prompt max-iterations max-memory]
   OODALoop
@@ -164,66 +126,10 @@
          :ready-for-inference true})))
 
   (decide [_this situation]
-    ;; Decide: Get LLM response with potential tool calls
     (decide-impl model situation))
 
   (act [_this decision]
-    ;; Act: Process LLM response and execute any tool calls
-    (case (:type decision)
-      :llm-response
-      (let [response (:response decision)
-            message (first (:choices response))
-            assistant-message (:message message)
-            tool-calls (:tool_calls assistant-message)]
-
-        (if tool-calls
-          ;; Execute tool calls
-          (let [tool-results (for [tool-call tool-calls]
-                               (let [function (:function tool-call)
-                                     tool-name (:name function)
-                                     args (json/read-str (:arguments function) :key-fn keyword)
-                                     result (execute-tool tool-name args)]
-                                 {:tool_call_id (:id tool-call)
-                                  :result result}))
-
-                ;; Add assistant message to conversation
-                updated-conversation (conj (:conversation decision) assistant-message)
-
-                ;; Add tool results as tool messages
-                final-conversation (reduce (fn [conv tool-result]
-                                             (conj conv {:role "tool"
-                                                         :tool_call_id (:tool_call_id tool-result)
-                                                         :content (json/write-str (:result tool-result))}))
-                                           updated-conversation
-                                           tool-results)]
-
-            ;; Print tool execution summary
-            (doseq [tool-result tool-results]
-              (let [result (:result tool-result)]
-                (if (:success result)
-                  (log/info (str "Tool executed successfully: "
-                                (or (:message result) "Operation completed")))
-                  (log/error (str "Tool error: " (:error result))))))
-
-            ;; Return updated state for next iteration
-            {:conversation final-conversation
-             :continue true})
-
-          ;; No tool calls - just add assistant response and print it
-          (do
-            (log/info (str "LLM: " (:content assistant-message)))
-            {:conversation (conj (:conversation decision) assistant-message)
-             :continue true})))
-
-      :error
-      (do
-        (log/error (str "Error: " (:error decision)))
-        {:conversation (:conversation decision)
-         :continue true})
-
-      ;; Default case
-      {:conversation conversation
-       :continue false})))
+    (act-impl decision conversation)))
 
 (def default-system-prompt
   "You are a helpful coding assistant with access to file operations.
