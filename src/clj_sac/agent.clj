@@ -7,6 +7,15 @@
    [clojure.java.shell]))
 
 ;; =====================================
+;; SYSTEM PROMPT
+;; =====================================
+
+(def system-prompt
+  "You are a helpful coding assistant with access to file operations.
+   When you need to read files, edit files, or list directories, use the available tools.
+   Always explain what you're doing before using tools.")
+
+;; =====================================
 ;; STATE MANAGEMENT
 ;; =====================================
 
@@ -150,7 +159,8 @@
 (defn construct-prompt
   "Construct the reasoning prompt for the LLM"
   [state tool-belt]
-  (str "You are an autonomous agent with the following goal:\n"
+  (str system-prompt "\n\n"
+       "You are an autonomous agent with the following goal:\n"
        "GOAL: " (:goal state) "\n\n"
 
        "CURRENT STATUS:\n"
@@ -163,10 +173,18 @@
        "AVAILABLE TOOLS:\n"
        (format-tools tool-belt) "\n\n"
 
+       "TOOL INPUT FORMATS:\n"
+       "- write-file: Use a JSON object with 'filename' and 'content' fields\n"
+       "- read-file: Use a string with the file path\n"
+       "- shell-command: Use a string with the command to execute\n"
+       "- think: Use a string with your thoughts\n"
+       "- finish: Use a string with a summary of completion\n"
+       "- web-search: Use a string with the search query\n\n"
+
        "INSTRUCTIONS:\n"
        "1. Analyze the current situation based on your goal and memory\n"
        "2. Choose the most appropriate tool to use next\n"
-       "3. Provide the input for that tool\n"
+       "3. Provide the input for that tool in the correct format\n"
        "4. Explain your reasoning\n\n"
 
        "Respond with a JSON object in this exact format:\n"
@@ -195,7 +213,8 @@
   "Get the agent's next decision from the LLM"
   [llm state tool-belt]
   (let [prompt (construct-prompt state tool-belt)
-        messages [{:role "user" :content prompt}]
+        messages [{:role "system" :content system-prompt}
+                  {:role "user" :content prompt}]
         response (chat-completion {:messages messages
                                    :model (:model llm "mistral-large-latest")
                                    :temperature 0.3
@@ -230,7 +249,16 @@
   "ACT: Execute the chosen tool and return the result"
   [tool-fn input]
   (try
-    (tool-fn input)
+    (cond
+      ;; Handle write-file tool specifically
+      (= tool-fn write-file-tool)
+      (if (map? input)
+        (write-file-tool (:filename input) (:content input))
+        (write-file-tool input "default content"))
+
+      ;; Handle other tools normally
+      :else
+      (tool-fn input))
     (catch Exception e
       {:tool :error
        :input input
@@ -246,18 +274,18 @@
 
 (defn update-state
   "Update agent state after an action"
-  [state decision result]
+  [state _result]
   (let [new-state (-> state
-                      (add-to-memory result)
+                      (add-to-memory _result)
                       (update :iteration inc))]
     (cond
-      (= (:tool result) :finish)
+      (= (:tool _result) :finish)
       (assoc new-state :status :completed)
 
       (>= (:iteration new-state) (:max-iterations new-state))
       (assoc new-state :status :max-iterations-reached)
 
-      (not (:success result))
+      (not (:success _result))
       new-state ; Continue even on errors, but record them
 
       :else
@@ -273,10 +301,10 @@
             (println (str "\n=== ITERATION " (:iteration state) " ===")))
 
         ;; Check if we should continue
-        should-continue? (and (= (:status state) :active)
-                             (< (:iteration state) (:max-iterations state)))]
+        continue-loop? (and (= (:status state) :active)
+                           (< (:iteration state) (:max-iterations state)))]
 
-    (if-not should-continue?
+    (if-not continue-loop?
       (do
         (when verbose?
           (println "Agent stopping. Status:" (:status state)))
@@ -299,12 +327,12 @@
               (println "Decision failed:" (:error action-result)))
             ;; Update state with error and continue
             (let [error-result {:tool :error
-                               :input (:decision decision-result)
-                               :output (:error action-result)
-                               :success false}
-                  new-state (update-state state (:decision decision-result) error-result)]
+                                :input (:decision decision-result)
+                                :output (:error action-result)
+                                :success false}
+                  new-state (update-state state error-result)]
               (swap! agent-atom (constantly new-state))
-                             (recur llm agent-atom tool-belt {:verbose? verbose?})))
+              (recur llm agent-atom tool-belt {:verbose? verbose?})))
 
           (let [;; ACT
                 result (act (:tool-fn action-result) (:input action-result))
@@ -313,15 +341,15 @@
                     (println "Action result:" result))
 
                 ;; Update state
-                new-state (update-state state (:decision decision-result) result)]
+                new-state (update-state state result)]
 
             ;; Update the atom
             (swap! agent-atom (constantly new-state))
 
             ;; Continue the loop if appropriate
-                         (if (should-continue? new-state result)
-               (recur llm agent-atom tool-belt {:verbose? verbose?})
-               new-state)))))))
+            (if (should-continue? new-state result)
+              (recur llm agent-atom tool-belt {:verbose? verbose?})
+              new-state)))))))
 
 ;; =====================================
 ;; PUBLIC API
@@ -331,8 +359,8 @@
   "Create a new autonomous agent"
   [goal & {:keys [tool-belt max-iterations max-memory-size]
            :or {tool-belt default-tool-belt
-                max-iterations 50
-                max-memory-size 100}}]
+                max-iterations 1
+                max-memory-size 1}}]
   (atom (create-agent-state goal
                            :max-iterations max-iterations
                            :max-memory-size max-memory-size)))
@@ -342,7 +370,8 @@
   [llm agent-atom & {:keys [tool-belt verbose?]
                      :or {tool-belt default-tool-belt
                           verbose? false}}]
-  (ooda-loop llm agent-atom tool-belt :verbose? verbose?))
+  (let [final-tool-belt tool-belt]
+    (ooda-loop llm agent-atom final-tool-belt :verbose? verbose?)))
 
 (defn agent-status
   "Get current status of the agent"
@@ -363,7 +392,8 @@
   (def my-llm {:model "mistral-large-latest" :temperature 0.7})
 
   ;; Create an agent with a goal
-  (def my-agent (create-agent "Write a simple 'Hello World' program in Python and save it to hello.py"))
+  ;(def my-agent (create-agent "Write a simple 'Hello World' program in Python and save it to hello.py"))
+  (def my-agent (create-agent "Add a function addition in src/clj_sac/core.clj. This function should make an addition with 2 numbers."))
 
   ;; Run the agent
   (run-agent my-llm my-agent :verbose? true)
