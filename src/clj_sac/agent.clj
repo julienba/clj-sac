@@ -1,406 +1,314 @@
 (ns clj-sac.agent
-  "Observe, Orient, Decide, Act loop"
   (:require
-   [clj-sac.llm.http.mistral :refer [chat-completion]]
-   [cheshire.core :as json]
+   [clj-sac.llm.http.mistral :as mistral]
+   [clojure.data.json :as json]
+   [clojure.java.io :as io]
    [clojure.string :as str]
-   [clojure.java.shell]))
+   [clojure.tools.logging :as log]))
 
-;; =====================================
-;; SYSTEM PROMPT
-;; =====================================
+;; Tool definitions
+(def tools
+  [{:type "function"
+    :function {:name "read_file"
+               :description "Read the contents of a file"
+               :parameters {:type "object"
+                            :properties {:path {:type "string"
+                                                :description "The file path to read"}}
+                            :required ["path"]}}}
+   {:type "function"
+    :function {:name "edit_file"
+               :description "Edit a file by replacing old content with new content"
+               :parameters {:type "object"
+                            :properties {:path {:type "string"
+                                                :description "The file path to edit"}
+                                         :old_str {:type "string"
+                                                   :description "The old content to replace (empty string for new file)"}
+                                         :new_str {:type "string"
+                                                   :description "The new content to insert"}}
+                            :required ["path" "old_str" "new_str"]}}}
+   {:type "function"
+    :function {:name "list_directory"
+               :description "List files and directories in a given path"
+               :parameters {:type "object"
+                            :properties {:path {:type "string"
+                                                :description "The directory path to list"}}
+                            :required ["path"]}}}])
 
-(def system-prompt
+;; Tool execution functions
+(defn read-file-tool [path]
+  (try
+    {:success true
+     :content (slurp path)}
+    (catch Exception e
+      {:success false
+       :error (.getMessage e)})))
+
+(defn get-current-directory []
+  (try
+    (.getCanonicalPath (io/file "."))
+    (catch Exception e
+      (str "Error getting current directory: " (.getMessage e)))))
+
+(get-current-directory)
+
+(defn edit-file-tool [path old-str new-str]
+  (try
+    (let [file (io/file path)]
+      (if (.exists file)
+        (if (str/blank? old-str)
+          ;; Append to existing file
+          (let [current-content (slurp file)
+                new-content (str current-content "\n" new-str)]
+            (spit path new-content)
+            {:success true
+             :message (str "Successfully appended to " path)})
+          ;; Replace specific content in existing file
+          (let [current-content (slurp file)
+                new-content (str/replace current-content old-str new-str)]
+            (spit path new-content)
+            {:success true
+             :message (str "Successfully edited " path)}))
+        ;; Create new file
+        (do
+          (io/make-parents file)
+          (spit path new-str)
+          {:success true
+           :message (str "Successfully created " path)})))
+    (catch Exception e
+      {:success false
+       :error (if (instance? clojure.lang.ExceptionInfo e)
+                (ex-message e)
+                (.getMessage e))})))
+
+(defn list-directory-tool [path]
+  (try
+    (let [dir (io/file path)]
+      (if (.exists dir)
+        {:success true
+         :files (->> (.listFiles dir)
+                     (map #(hash-map :name (.getName %)
+                                     :type (if (.isDirectory %) "directory" "file")))
+                     (sort-by :name))}
+        {:success false
+         :error (str "Directory does not exist: " path)}))
+    (catch Exception e
+      {:success false
+       :error (.getMessage e)})))
+
+(defn execute-tool [tool-name args]
+  (case tool-name
+    "read_file" (read-file-tool (:path args))
+    "edit_file" (edit-file-tool (:path args) (:old_str args) (:new_str args))
+    "list_directory" (list-directory-tool (:path args))
+    {:success false
+     :error (str "Unknown tool: " tool-name)}))
+
+;; OODA Loop Implementation
+(defprotocol OODALoop
+  (observe [this] "Gather information from environment")
+  (orient [this observations] "Analyze and synthesize observations")
+  (decide [this situation] "Determine the best course of action")
+  (act [this decision] "Execute the decision"))
+
+(defn decide-impl [model situation]
+  (log/info :decide-impl situation)
+  (when (:ready-for-inference situation)
+    (try
+      (let [response (mistral/chat-completion
+                      {:messages (:conversation situation)
+                       :model model
+                       :tools tools
+                       :temperature 0.7}
+                      {:headers {"Authorization" (str "Bearer " mistral/TOKEN)}})]
+        (if (= 200 (:status response))
+          {:type :llm-response
+           :response (:body response)
+           :conversation (:conversation situation)}
+          {:type :error
+           :error (str "HTTP " (:status response) " error")}))
+      (catch Exception e
+        {:type :error
+         :error (if (instance? clojure.lang.ExceptionInfo e)
+                  (ex-data e)
+                  (.getMessage e))}))))
+
+(defrecord Agent [conversation model user-prompt max-iterations max-memory]
+  OODALoop
+
+  (observe [_this]
+    ;; Observe: Get user input or continue with existing conversation
+    (if-let [user-input user-prompt]
+      ;; New user input
+      (do
+        (log/info :line user-input)
+        {:type :user-input
+         :content user-input
+         :timestamp (System/currentTimeMillis)})
+      ;; No new input, but continue with conversation if the last message is a tool message
+      (when (and (seq conversation)
+                 (= (:role (last conversation)) "tool"))
+        {:type :continue-conversation
+         :timestamp (System/currentTimeMillis)})))
+
+  (orient [_this observations]
+    ;; Orient: Add user input to conversation and prepare for LLM
+    (when observations
+      (case (:type observations)
+        :user-input
+        (let [user-message {:role "user" :content (:content observations)}
+              updated-conversation (conj conversation user-message)]
+          {:conversation updated-conversation
+           :ready-for-inference true})
+        :continue-conversation
+        {:conversation conversation
+         :ready-for-inference true})))
+
+  (decide [_this situation]
+    ;; Decide: Get LLM response with potential tool calls
+    (decide-impl model situation))
+
+  (act [_this decision]
+    ;; Act: Process LLM response and execute any tool calls
+    (case (:type decision)
+      :llm-response
+      (let [response (:response decision)
+            message (first (:choices response))
+            assistant-message (:message message)
+            tool-calls (:tool_calls assistant-message)]
+
+        (if tool-calls
+          ;; Execute tool calls
+          (let [tool-results (for [tool-call tool-calls]
+                               (let [function (:function tool-call)
+                                     tool-name (:name function)
+                                     args (json/read-str (:arguments function) :key-fn keyword)
+                                     result (execute-tool tool-name args)]
+                                 {:tool_call_id (:id tool-call)
+                                  :result result}))
+
+                ;; Add assistant message to conversation
+                updated-conversation (conj (:conversation decision) assistant-message)
+
+                ;; Add tool results as tool messages
+                final-conversation (reduce (fn [conv tool-result]
+                                             (conj conv {:role "tool"
+                                                         :tool_call_id (:tool_call_id tool-result)
+                                                         :content (json/write-str (:result tool-result))}))
+                                           updated-conversation
+                                           tool-results)]
+
+            ;; Print tool execution summary
+            (doseq [tool-result tool-results]
+              (let [result (:result tool-result)]
+                (if (:success result)
+                  (log/info (str "Tool executed successfully: "
+                                (or (:message result) "Operation completed")))
+                  (log/error (str "Tool error: " (:error result))))))
+
+            ;; Return updated state for next iteration
+            {:conversation final-conversation
+             :continue true})
+
+          ;; No tool calls - just add assistant response and print it
+          (do
+            (log/info (str "LLM: " (:content assistant-message)))
+            {:conversation (conj (:conversation decision) assistant-message)
+             :continue true})))
+
+      :error
+      (do
+        (log/error (str "Error: " (:error decision)))
+        {:conversation (:conversation decision)
+         :continue true})
+
+      ;; Default case
+      {:conversation conversation
+       :continue false})))
+
+(def default-system-prompt
   "You are a helpful coding assistant with access to file operations.
    When you need to read files, edit files, or list directories, use the available tools.
-   Always explain what you're doing before using tools.")
+   Always explain what you're doing before using tools.
+   For file edits, be precise with the old_str parameter - it must match exactly what's in the file.")
 
-;; =====================================
-;; STATE MANAGEMENT
-;; =====================================
-
-(defn create-agent-state
-  "Creates initial agent state with goal, memory, and metadata"
-  [goal & {:keys [max-iterations max-memory-size]
-           :or {max-iterations 50 max-memory-size 100}}]
-  {:goal goal
-   :memory []
-   :iteration 0
-   :status :active
-   :max-iterations max-iterations
-   :max-memory-size max-memory-size
-   :created-at (java.time.Instant/now)})
-
-(defn add-to-memory
-  "Adds an entry to agent memory, pruning if necessary"
-  [state entry]
-  (let [new-memory (conj (:memory state) entry)
-        pruned-memory (if (> (count new-memory) (:max-memory-size state))
-                        (vec (take-last (:max-memory-size state) new-memory))
-                        new-memory)]
-    (assoc state :memory pruned-memory)))
-
-;; =====================================
-;; TOOL BELT
-;; =====================================
-
-(defn web-search-tool
-  "Simulated web search - replace with real implementation"
-  [query]
-  {:tool :web-search
-   :input query
-   :output (str "Search results for: " query " (This is a simulated result)")
-   :success true})
-
-(defn read-file-tool
-  "Read file from filesystem"
-  [filepath]
-  (try
-    {:tool :read-file
-     :input filepath
-     :output (slurp filepath)
-     :success true}
-    (catch Exception e
-      {:tool :read-file
-       :input filepath
-       :output (str "Error reading file: " (.getMessage e))
-       :success false})))
-
-(defn write-file-tool
-  "Write content to file"
-  [filepath content]
-  (try
-    (spit filepath content)
-    {:tool :write-file
-     :input {:filepath filepath :content content}
-     :output (str "Successfully wrote to " filepath)
-     :success true}
-    (catch Exception e
-      {:tool :write-file
-       :input {:filepath filepath :content content}
-       :output (str "Error writing file: " (.getMessage e))
-       :success false})))
-
-(defn shell-command-tool
-  "Execute shell command"
-  [command]
-  (try
-    (let [result (clojure.java.shell/sh "bash" "-c" command)]
-      {:tool :shell-command
-       :input command
-       :output {:stdout (:out result)
-                :stderr (:err result)
-                :exit-code (:exit result)}
-       :success (zero? (:exit result))})
-    (catch Exception e
-      {:tool :shell-command
-       :input command
-       :output (str "Error executing command: " (.getMessage e))
-       :success false})))
-
-(defn think-tool
-  "Allow agent to record its thoughts without taking action"
-  [thoughts]
-  {:tool :think
-   :input thoughts
-   :output (str "Recorded thoughts: " thoughts)
-   :success true})
-
-(defn finish-tool
-  "Signal that the agent has completed its goal"
-  [summary]
-  {:tool :finish
-   :input summary
-   :output (str "Task completed: " summary)
-   :success true})
-
-(def default-tool-belt
-  "Default set of tools available to the agent"
-  {:web-search {:fn web-search-tool
-                :description "Search the web for information about a topic"}
-   :read-file {:fn read-file-tool
-               :description "Read the contents of a file from the filesystem"}
-   :write-file {:fn write-file-tool
-                :description "Write content to a file on the filesystem"}
-   :shell-command {:fn shell-command-tool
-                   :description "Execute a shell command and return the result"}
-   :think {:fn think-tool
-           :description "Record thoughts or reasoning without taking external action"}
-   :finish {:fn finish-tool
-            :description "Signal that the primary goal has been completed"}})
-
-;; =====================================
-;; THE MIND (LLM PROMPTING)
-;; =====================================
-
-(defn format-memory
-  "Format agent memory for inclusion in prompt"
-  [memory]
-  (if (empty? memory)
-    "No previous actions taken."
-    (str/join "\n\n"
-              (map-indexed
-                (fn [idx entry]
-                  (str "Action " (inc idx) ":\n"
-                       "  Tool: " (:tool entry) "\n"
-                       "  Input: " (pr-str (:input entry)) "\n"
-                       "  Output: " (pr-str (:output entry)) "\n"
-                       "  Success: " (:success entry)))
-                memory))))
-
-(defn format-tools
-  "Format available tools for inclusion in prompt"
-  [tool-belt]
-  (str/join "\n"
-            (map (fn [[tool-name tool-spec]]
-                   (str "- " (name tool-name) ": " (:description tool-spec)))
-                 tool-belt)))
-
-(defn construct-prompt
-  "Construct the reasoning prompt for the LLM"
-  [state tool-belt]
-  (str system-prompt "\n\n"
-       "You are an autonomous agent with the following goal:\n"
-       "GOAL: " (:goal state) "\n\n"
-
-       "CURRENT STATUS:\n"
-       "- Iteration: " (:iteration state) "/" (:max-iterations state) "\n"
-       "- Status: " (:status state) "\n\n"
-
-       "MEMORY (Previous Actions):\n"
-       (format-memory (:memory state)) "\n\n"
-
-       "AVAILABLE TOOLS:\n"
-       (format-tools tool-belt) "\n\n"
-
-       "TOOL INPUT FORMATS:\n"
-       "- write-file: Use a JSON object with 'filename' and 'content' fields\n"
-       "- read-file: Use a string with the file path\n"
-       "- shell-command: Use a string with the command to execute\n"
-       "- think: Use a string with your thoughts\n"
-       "- finish: Use a string with a summary of completion\n"
-       "- web-search: Use a string with the search query\n\n"
-
-       "INSTRUCTIONS:\n"
-       "1. Analyze the current situation based on your goal and memory\n"
-       "2. Choose the most appropriate tool to use next\n"
-       "3. Provide the input for that tool in the correct format\n"
-       "4. Explain your reasoning\n\n"
-
-       "Respond with a JSON object in this exact format:\n"
-       "{\n"
-       "  \"reasoning\": \"Your step-by-step reasoning process\",\n"
-       "  \"tool\": \"tool_name\",\n"
-       "  \"input\": \"input_for_the_tool\"\n"
-       "}\n\n"
-
-       "If you believe the goal has been achieved, use the 'finish' tool.\n"
-       "If you need to think through the problem, use the 'think' tool.\n"
-       "Be concise but thorough in your reasoning."))
-
-(defn parse-llm-response
-  "Parse the LLM's JSON response into a structured decision"
-  [response-content]
-  (try
-    (let [parsed (json/parse-string response-content true)]
-      (if (and (:tool parsed) (:input parsed))
-        {:success true :decision parsed}
-        {:success false :error "Missing required fields: tool and input"}))
-    (catch Exception e
-      {:success false :error (str "Failed to parse JSON response: " (.getMessage e))})))
-
-(defn get-llm-decision
-  "Get the agent's next decision from the LLM"
-  [llm state tool-belt]
-  (let [prompt (construct-prompt state tool-belt)
-        messages [{:role "system" :content system-prompt}
-                  {:role "user" :content prompt}]
-        response (chat-completion {:messages messages
-                                   :model (:model llm "mistral-large-latest")
-                                   :temperature 0.3
-                                   :max-tokens 500}
-                                  {:headers {"Authorization" (str "Bearer " (System/getenv "WF_MISTRAL_KEY"))}})]
-    (parse-llm-response (-> response :body :choices first :message :content))))
-
-;; =====================================
-;; THE OODA LOOP
-;; =====================================
-
-(defn observe
-  "OBSERVE: Read current state from atom"
-  [agent-atom]
-  @agent-atom)
-
-(defn orient
-  "ORIENT: Construct prompt and get LLM decision"
-  [llm state tool-belt]
-  (get-llm-decision llm state tool-belt))
-
-(defn decide
-  "DECIDE: Validate and prepare the chosen action"
-  [decision tool-belt]
-  (let [tool-name (keyword (:tool decision))
-        tool-spec (get tool-belt tool-name)]
-    (if tool-spec
-      {:success true :tool-name tool-name :tool-fn (:fn tool-spec) :input (:input decision)}
-      {:success false :error (str "Unknown tool: " (:tool decision))})))
-
-(defn act
-  "ACT: Execute the chosen tool and return the result"
-  [tool-fn input]
-  (try
-    (cond
-      ;; Handle write-file tool specifically
-      (= tool-fn write-file-tool)
-      (if (map? input)
-        (write-file-tool (:filename input) (:content input))
-        (write-file-tool input "default content"))
-
-      ;; Handle other tools normally
-      :else
-      (tool-fn input))
-    (catch Exception e
-      {:tool :error
-       :input input
-       :output (str "Error executing tool: " (.getMessage e))
-       :success false})))
-
-(defn should-continue?
-  "Check if the agent should continue running"
-  [state result]
-  (and (= (:status state) :active)
-       (< (:iteration state) (:max-iterations state))
-       (not= (:tool result) :finish)))
-
-(defn update-state
-  "Update agent state after an action"
-  [state _result]
-  (let [new-state (-> state
-                      (add-to-memory _result)
-                      (update :iteration inc))]
-    (cond
-      (= (:tool _result) :finish)
-      (assoc new-state :status :completed)
-
-      (>= (:iteration new-state) (:max-iterations new-state))
-      (assoc new-state :status :max-iterations-reached)
-
-      (not (:success _result))
-      new-state ; Continue even on errors, but record them
-
-      :else
-      new-state)))
-
-(defn ooda-loop
-  "Main OODA loop - recursive function implementing the agent's behavior"
-  [llm agent-atom tool-belt & {:keys [verbose?] :or {verbose? false}}]
-  (let [;; OBSERVE
-        state (observe agent-atom)
-
-        _ (when verbose?
-            (println (str "\n=== ITERATION " (:iteration state) " ===")))
-
-        ;; Check if we should continue
-        continue-loop? (and (= (:status state) :active)
-                           (< (:iteration state) (:max-iterations state)))]
-
-    (if-not continue-loop?
-      (do
-        (when verbose?
-          (println "Agent stopping. Status:" (:status state)))
-        state)
-
-      (let [;; ORIENT
-            decision-result (orient llm state tool-belt)
-
-            _ (when verbose?
-                (println "Decision:" decision-result))
-
-            ;; DECIDE
-            action-result (if (:success decision-result)
-                           (decide (:decision decision-result) tool-belt)
-                           {:success false :error (:error decision-result)})]
-
-        (if-not (:success action-result)
-          (do
-            (when verbose?
-              (println "Decision failed:" (:error action-result)))
-            ;; Update state with error and continue
-            (let [error-result {:tool :error
-                                :input (:decision decision-result)
-                                :output (:error action-result)
-                                :success false}
-                  new-state (update-state state error-result)]
-              (swap! agent-atom (constantly new-state))
-              (recur llm agent-atom tool-belt {:verbose? verbose?})))
-
-          (let [;; ACT
-                result (act (:tool-fn action-result) (:input action-result))
-
-                _ (when verbose?
-                    (println "Action result:" result))
-
-                ;; Update state
-                new-state (update-state state result)]
-
-            ;; Update the atom
-            (swap! agent-atom (constantly new-state))
-
-            ;; Continue the loop if appropriate
-            (if (should-continue? new-state result)
-              (recur llm agent-atom tool-belt {:verbose? verbose?})
-              new-state)))))))
-
-;; =====================================
-;; PUBLIC API
-;; =====================================
+(defn truncate-conversation
+  "Keep only the last max-memory messages in the conversation, preserving the system message"
+  [conversation max-memory]
+  (if (<= (count conversation) max-memory)
+    conversation
+    (let [system-message (first conversation)
+          other-messages (rest conversation)
+          messages-to-keep (take-last (dec max-memory) other-messages)]
+      (cons system-message messages-to-keep))))
 
 (defn create-agent
-  "Create a new autonomous agent"
-  [goal & {:keys [tool-belt max-iterations max-memory-size]
-           :or {tool-belt default-tool-belt
-                max-iterations 1
-                max-memory-size 1}}]
-  (atom (create-agent-state goal
-                           :max-iterations max-iterations
-                           :max-memory-size max-memory-size)))
+  "Create a new OODA loop agent with initial system message"
+  [model system-prompt user-prompt]
+  (let [system-message {:role "system"
+                        :content system-prompt}]
+    (->Agent [system-message] model user-prompt 50 10)))
 
-(defn run-agent
-  "Run the autonomous agent to completion"
-  [llm agent-atom & {:keys [tool-belt verbose?]
-                     :or {tool-belt default-tool-belt
-                          verbose? false}}]
-  (let [final-tool-belt tool-belt]
-    (ooda-loop llm agent-atom final-tool-belt :verbose? verbose?)))
+(defn run-ooda-loop
+  "Main OODA loop execution"
+  [agent]
+  (log/info "OODA Loop Agent started (Ctrl+C to quit)")
+  (log/info "Using Mistral model for decisions")
+  (log/info (str "Max iterations: " (:max-iterations agent)))
+  (log/info (str "Max memory: " (:max-memory agent) " messages"))
+  (loop [current-agent agent
+         iteration 0]
+    (Thread/sleep 500) ; Slow things down in case to prevent a infinit loop to spam the LLM provider
 
-(defn agent-status
-  "Get current status of the agent"
-  [agent-atom]
-  (select-keys @agent-atom [:goal :status :iteration :max-iterations]))
+    ;; Check iteration limit
+    (when (>= iteration (:max-iterations current-agent))
+      (log/warn (str "Reached maximum iterations (" (:max-iterations current-agent) "). Stopping."))
+      (reduced nil))
 
-(defn agent-memory
-  "Get the agent's memory"
-  [agent-atom]
-  (:memory @agent-atom))
+    ;; OBSERVE
+    (when-let [observations (observe current-agent)]
+      (log/info (str "OBSERVE: " (:type observations)
+                    (when (= (:type observations) :user-input)
+                      (str " - " (:content observations)))))
+      ;; ORIENT
+      (when-let [situation (orient current-agent observations)]
+        (log/info (str "ORIENT: ready-for-inference=" (:ready-for-inference situation)))
+        ;; DECIDE
+        (when-let [decision (decide current-agent situation)]
+          (log/info (str "DECIDE: type=" (:type decision)))
+          ;; ACT
+          (let [result (act current-agent decision)]
+            (log/info (str "ACT: continue=" (:continue result) " (iteration " (inc iteration) ")"))
+            (when (:continue result)
+              ;; Apply memory management to conversation
+              (let [truncated-conversation (truncate-conversation (:conversation result) (:max-memory current-agent))
+                    updated-agent (assoc current-agent :conversation truncated-conversation)]
+                (recur updated-agent (inc iteration))))))))))
 
-;; =====================================
-;; EXAMPLE USAGE
-;; =====================================
+(defn start-agent
+  "Start the OODA loop agent with default model"
+  [{:keys [model system-prompt user-prompt max-iterations max-memory]
+    :or {model "mistral-large-latest"
+         system-prompt default-system-prompt
+         max-iterations 50
+         max-memory 10}}]
+  (if mistral/TOKEN
+    (let [agent (create-agent model system-prompt user-prompt)]
+      (run-ooda-loop (assoc agent :max-iterations max-iterations :max-memory max-memory)))
+    (log/error "Error: WF_MISTRAL_KEY environment variable not set")))
 
+;; Example usage
 (comment
-  ;; Create an LLM instance
-  (def my-llm {:model "mistral-large-latest" :temperature 0.7})
+  ;; Start the agent with default model and limits
+  ;(set-user-prompt "Write me an haiku")
+  (start-agent {:user-prompt "Add a function `addition` in src/clj_sac/core.clj. This function should make an addition with 2 numbers."})
+  (start-agent {:user-prompt "Write a simple 'Hello World' program in Python and save it to hello.py"})
 
-  ;; Create an agent with a goal
-  ;(def my-agent (create-agent "Write a simple 'Hello World' program in Python and save it to hello.py"))
-  (def my-agent (create-agent "Add a function addition in src/clj_sac/core.clj. This function should make an addition with 2 numbers."))
+  ;; Start the agent with custom limits
+  (start-agent {:user-prompt "Complex task requiring many steps"
+                :max-iterations 100
+                :max-memory 20})
 
-  ;; Run the agent
-  (run-agent my-llm my-agent :verbose? true)
-
-  ;; Check status
-  (agent-status my-agent)
-
-  ;; View memory
-  (agent-memory my-agent)
-  )
+  ;; Start the agent with minimal limits for simple tasks
+  (start-agent {:user-prompt "Simple task"
+                :max-iterations 10
+                :max-memory 5}))

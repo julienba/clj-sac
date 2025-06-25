@@ -1,6 +1,6 @@
-(ns clj-sac.agent2-test
+(ns clj-sac.agent-test
   (:require [clojure.test :refer :all]
-            [clj-sac.agent2 :as agent2]
+            [clj-sac.agent :as agent2]
             [clj-sac.llm.http.mistral :as mistral]
             [clojure.java.io :as io]
             [clojure.data.json :as json]
