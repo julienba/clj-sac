@@ -4,7 +4,9 @@
    [cheshire.core :as json]
    [malli.core :as m]
    [malli.error :as me]
-   [malli.transform :as mt]))
+   [malli.transform :as mt]
+   [clojure.core.async :as a]
+   [clojure.string :as string]))
 
 (defn validate-schema! [error-msg schema-or-fn data]
   (if (vector? schema-or-fn)
@@ -79,3 +81,62 @@
                          :response response})
         (throw (ex-info (str (:status response) " response status for " url)
                         full-response))))))
+
+(defn- parse-sse-event
+  "Parse a Server-Sent Event into a Clojure data structure"
+  [raw-event]
+  (let [data-idx (string/index-of raw-event "{")
+        done-idx (string/index-of raw-event "[DONE]")]
+    (if done-idx
+      :done
+      (when data-idx
+        (try
+          (-> (subs raw-event data-idx)
+              (json/parse-string true))
+          (catch Exception _
+            nil))))))
+
+(defn- sse-events
+  "Returns a core.async channel with SSE events as Clojure data structures"
+  [{:keys [url headers body parse-event]
+    :or {parse-event parse-sse-event}}]
+  (let [events (a/chan (a/buffer 1000) (map parse-event))
+        event-mask (re-pattern "(?s).+?\n\n")]
+    (a/thread
+      (try
+        (let [response (http/post url
+                                  {:headers headers
+                                   :body body
+                                   :as :stream
+                                   :throw-exceptions false})
+              stream (:body response)]
+          (loop [byte-coll []]
+            (let [byte-arr (byte-array (max 1 (.available stream)))
+                  bytes-read (.read stream byte-arr)]
+              (if (neg? bytes-read)
+                ;; Input stream closed, exiting read-loop
+                (a/close! events)
+                (let [next-byte-coll (concat byte-coll (seq byte-arr))
+                      data (slurp (byte-array next-byte-coll))]
+                  (if-let [es (not-empty (re-seq event-mask data))]
+                    (if (every? true? (map #(a/>!! events %) es))
+                      (recur (drop (apply + (map #(count (.getBytes ^String %)) es))
+                                   next-byte-coll))
+                      ;; Output stream closed, exiting read-loop
+                      (a/close! events))
+                    (recur next-byte-coll))))))
+          (.close stream))
+        (catch Exception e
+          (a/>!! events {:error e})
+          (a/close! events))))
+    events))
+
+;; TODO add schema check if possible
+(defn stream-post
+  "Make a streaming POST request and return a channel with SSE events"
+  [url body {:keys [headers parse-event] :as _opts}]
+  (assert url)
+  (sse-events {:url url
+               :headers headers
+               :body body
+               :parse-event parse-event}))

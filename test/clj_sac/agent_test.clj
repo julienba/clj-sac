@@ -4,7 +4,8 @@
             [clj-sac.llm.http.mistral :as mistral]
             [clojure.java.io :as io]
             [clojure.data.json :as json]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [clojure.core.async :as a]))
 
 (defn mock-mistral-chat-completion [_model-opts _http-opts]
   ;; Simulate a response that would trigger the edit_file tool call for hello.py
@@ -47,3 +48,31 @@
           ;; Clean up after test
           (when (.exists (io/file test-file))
             (io/delete-file test-file)))))))
+
+(deftest test-stream-chat-completion
+  (testing "Stream chat completion returns a channel"
+    (let [stream-channel (mistral/stream-chat-completion
+                           {:messages [{:content "Hello"
+                                       :role "user"}]
+                            :model "mistral-large-latest"}
+                           {:headers {"Authorization" "Bearer test-token"}})]
+      (is (instance? clojure.core.async.impl.channels.ManyToManyChannel stream-channel))
+      (a/close! stream-channel))))
+
+(deftest test-stream-chat-completion-with-tools
+  (testing "Stream chat completion with tools returns a channel"
+    (let [tools [{:type "function"
+                  :function {:name "test_function"
+                             :description "A test function"
+                             :parameters {:type "object"
+                                         :properties {:test {:type "string"}}
+                                         :required ["test"]}}}]
+          stream-channel (mistral/stream-chat-completion
+                           {:messages [{:content "Test message"
+                                       :role "user"}]
+                            :model "mistral-large-latest"
+                            :tools tools
+                            :tool-choice "auto"}
+                           {:headers {"Authorization" "Bearer test-token"}})]
+      (is (instance? clojure.core.async.impl.channels.ManyToManyChannel stream-channel))
+      (a/close! stream-channel))))

@@ -1,7 +1,8 @@
 (ns mistral-example
   (:require
    [cheshire.core :as json]
-   [clj-sac.llm.http.mistral :as mistral]))
+   [clj-sac.llm.http.mistral :as mistral]
+   [clojure.core.async :as a]))
 
 (def TOKEN (System/getenv "WF_MISTRAL_KEY"))
 
@@ -10,8 +11,7 @@
    {:messages [{:content "Write me a small haiku about Amsterdam"
                 :role "user"}]
     :model "mistral-large-latest"}
-   {:headers {"Authorization" (str "Bearer " TOKEN)}})
-  )
+   {:headers {"Authorization" (str "Bearer " TOKEN)}}))
 
 
 ;; ~ Function calling example
@@ -110,4 +110,145 @@
      {:headers {"Authorization" (str "Bearer " TOKEN)}}))
 
   (tap> function-call-response-2))
+
+;; Example of regular chat completion
+(defn regular-chat-example []
+  (let [response (mistral/chat-completion
+                  {:messages [{:content "Write me a small haiku about Amsterdam"
+                               :role "user"}]
+                   :model "mistral-large-latest"}
+                  {:headers {"Authorization" (str "Bearer " (System/getenv "WF_MISTRAL_KEY"))}})]
+    (println "Regular response:")
+    (println (:body response))))
+
+;; Example of streaming chat completion (blocking version - shows results immediately)
+(defn streaming-chat-example []
+  (let [stream-channel (mistral/stream-chat-completion
+                        {:messages [{:content "Write me a small haiku about Amsterdam"
+                                     :role "user"}]
+                         :model "mistral-large-latest"}
+                        {:headers {"Authorization" (str "Bearer " (System/getenv "WF_MISTRAL_KEY"))}})]
+    (println "Streaming response:")
+    ;; Use a blocking loop to see results immediately
+    (loop []
+      (when-let [chunk (a/<!! stream-channel)]
+        (cond
+          (= chunk :done)
+          (println "\n[Stream complete]")
+
+          (:content chunk)
+          (do
+            (print (:content chunk))
+            (flush)
+            (recur))
+
+          (:tool-call chunk)
+          (do
+            (println "\n[Tool call received:]" (:tool-call chunk))
+            (recur))
+
+          (:finish-reason chunk)
+          (do
+            (println "\n[Finish reason:]" (:finish-reason chunk))
+            (recur))
+
+          (:error chunk)
+          (println "\n[Error:]" (:error chunk))
+
+          :else
+          (recur))))))
+
+;; Example of streaming chat completion (non-blocking version - returns channel)
+(defn streaming-chat-example-async []
+  (let [stream-channel (mistral/stream-chat-completion
+                        {:messages [{:content "Write me a small haiku about Amsterdam"
+                                     :role "user"}]
+                         :model "mistral-large-latest"}
+                        {:headers {"Authorization" (str "Bearer " (System/getenv "WF_MISTRAL_KEY"))}})]
+    (println "Streaming response (async):")
+    (a/go-loop []
+      (when-let [chunk (a/<! stream-channel)]
+        (cond
+          (= chunk :done)
+          (println "\n[Stream complete]")
+
+          (:content chunk)
+          (do
+            (print (:content chunk))
+            (flush)
+            (recur))
+
+          (:tool-call chunk)
+          (do
+            (println "\n[Tool call received:]" (:tool-call chunk))
+            (recur))
+
+          (:finish-reason chunk)
+          (do
+            (println "\n[Finish reason:]" (:finish-reason chunk))
+            (recur))
+
+          (:error chunk)
+          (println "\n[Error:]" (:error chunk))
+
+          :else
+          (recur))))
+    stream-channel))
+
+;; Example of streaming with tool calls
+(defn streaming-with-tools-example []
+  (let [tools [{:type "function"
+                :function {:name "get_weather"
+                           :description "Get the current weather in a given location"
+                           :parameters {:type "object"
+                                        :properties {:location {:type "string"
+                                                                :description "The city and state, e.g. San Francisco, CA"}}
+                                        :required ["location"]}}}]
+        stream-channel (mistral/stream-chat-completion
+                        {:messages [{:content "What's the weather like in Amsterdam?"
+                                     :role "user"}]
+                         :model "mistral-large-latest"
+                         :tools tools
+                         :tool-choice "auto"}
+                        {:headers {"Authorization" (str "Bearer " (System/getenv "WF_MISTRAL_KEY"))}})]
+    (println "Streaming with tools:")
+    (a/go-loop []
+      (when-let [chunk (a/<! stream-channel)]
+        (cond
+          (= chunk :done)
+          (println "\n[Stream complete]")
+
+          (:content chunk)
+          (do
+            (print (:content chunk))
+            (flush)
+            (recur))
+
+          (:tool-call chunk)
+          (do
+            (println "\n[Tool call:]" (pr-str (:tool-call chunk)))
+            (recur))
+
+          (:finish-reason chunk)
+          (do
+            (println "\n[Finish reason:]" (:finish-reason chunk))
+            (recur))
+
+          (:error chunk)
+          (println "\n[Error:]" (:error chunk))
+
+          :else
+          (recur))))))
+
+(comment
+  ;; Run examples (make sure WF_MISTRAL_KEY is set)
+  (regular-chat-example)
+
+  ;; Blocking version - shows results immediately
+  (streaming-chat-example)
+
+  ;; Non-blocking version - returns a channel, runs in background
+  (streaming-chat-example-async)
+
+  (streaming-with-tools-example))
 

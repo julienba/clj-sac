@@ -19,5 +19,6 @@
 
  :aliases
  {:test {:extra-paths ["test"]
-         :extra-deps {lambdaisland/kaocha {:mvn/version "1.87.1366"}}
-         :main-opts ["-m" "kaocha.runner"]}}}
+         :extra-deps {io.github.julienba/hato-http-fake {:git/sha "f3dfe14303478cbee5bc495c2a79951a1aeab385"}}}
+  :runner {:extra-deps {lambdaisland/kaocha {:mvn/version "1.91.1392"}}
+           :main-opts ["-m" "kaocha.runner"]}}}

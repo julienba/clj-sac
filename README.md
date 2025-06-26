@@ -1,6 +1,10 @@
 # Description
 This project is a Clojure toolbox for developing with LLMs
 
+# Features
+
+See examples directory
+
 # Milestones
 
 ## Release the minimum version
@@ -34,4 +38,4 @@ Add facility to read and write prompt
 
 ### Start an orchestration namespace
 
-See notion description
+See Notion description
