@@ -1,0 +1,14 @@
+---
+description: Clojure code style and best practices
+globs: "*.clj,*.cljc","*.cljs"
+alwaysApply: false
+---
+
+# Clojure code style rules
+
+## Private functions and vars
+- Declare functions and vars as private when they shouldn't be used outside their namespace
+- Use ^:private for vars
+- Use defn- for private functions
+- Functions only used internally should be private
+
