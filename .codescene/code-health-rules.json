@@ -1,0 +1,15 @@
+{
+  "usage": "Persist this file inside your repositories as .codescene/code-health-rules.json to customize code health rules for this project",
+  "rule_sets": [
+    {
+      "matching_content_path": "**/*.clj",
+      "matching_content_path_doc": "Specify a glob pattern relative to the repository root. This rule set applies to all Clojure files.",
+      "rules": [],
+      "thresholds": [{
+          "name" : "function_cyclomatic_complexity_warning",
+          "value" : 10
+        }
+      ]
+    }
+  ]
+}

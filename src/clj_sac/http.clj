@@ -23,7 +23,7 @@
                        :message data})))))
 
 (def default-timeout
-  (* 4 (* 60 1000)))
+  (* 4 60 1000))
 
 (defn- coerce-response-headers
   "Coerce response headers to match the schema by transforming string keys to keywords
