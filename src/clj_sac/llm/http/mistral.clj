@@ -23,15 +23,16 @@
     [:sequential [:map
                   [:role [:enum "system" "user" "assistant" "tool"]]
                   [:content :string]
-                  [:tool_calls {:optional true} [:sequential
-                                                 [:map
-                                                  [:id :string]
-                                                  [:type [:enum "function"]]
-                                                  [:name {:optional true} :string]
-                                                  [:function
-                                                   [:map
-                                                    [:name :string]
-                                                    [:arguments :string]]]]]]]]]
+                  [:tool_call_id {:optional true} :string]
+                  [:tool_calls {:optional true} [:maybe [:sequential
+                                                          [:map
+                                                           [:id :string]
+                                                           [:type {:optional true} [:enum "function"]]
+                                                           [:index :int]
+                                                           [:function
+                                                            [:map
+                                                             [:name :string]
+                                                             [:arguments :string]]]]]]]]]]
 
    ;; Optional parameters sorted alphabetically
    [:frequency_penalty {:optional true} [:double {:min -2.0 :max 2.0}]]
@@ -101,39 +102,7 @@
                       tool-choice (assoc :tool_choice tool-choice))]
     (http/post chat-url form-params (merge {:parse-json? true
                                             :schemas {:request-schema CompletionRequest
-                                                      :response-header-schema ResponseHeaders
+                                                      ;:response-header-schema ResponseHeaders
                                                       :response-schema CompletionResponse}}
                                            http-opts))))
-
-
-;; (defn stream-chat-completion
-;;   [{:keys [api-key messages tools model response-format completions-url]
-;;     :or {model "gpt-4o-mini"
-;;          completions-url openai-completions-url}}]
-;;   (:body (request/sse-request {:request {:url completions-url
-;;                                          :headers {"Authorization" (str "Bearer " api-key)
-;;                                                    "Content-Type" "application/json"}
-
-;;                                          :method :post
-;;                                          :body (u/json-str (cond-> {:messages messages
-;;                                                                     :stream true
-;;                                                                     :response_format response-format
-;;                                                                     :model model}
-;;                                                              (pos? (count tools)) (assoc :tools tools)))}
-;;                                :params {:stream/close? true}})))
-
-
-
-;; TODO move everything below to an example project
-
-(comment
-  (def R (chat-completion {:messages [{:content "Write me a small haiku about Amsterdam"
-                                       :role "user"}]
-                           :model "mistral-large-latest"}
-                          {:headers {"Authorization" (str "Bearer " TOKEN)}}))
-  (tap> R))
-
-
-
-;; ~ Function calling example
 

@@ -1,7 +1,2 @@
-(ns clj-sac.core
-  (:require
-   [malle.llm.protocol :as p]
-   [malle.llm.mistral :as llm.mistral]))
+(ns clj-sac.core)
 
-
-;(p/count-tokens (llm.mistral/new {}) [])

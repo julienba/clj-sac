@@ -1,12 +1,6 @@
 # Description
 This project is a Clojure toolbox for developing with LLMs
 
-# TODOs
-- [ ] Migrate the http namespace to use hato
-- [ ] Call mistral using the http namespace
-- [ ] Finish the Mistral implementation using the aboves
-- [ ] Rename the project to `sac`: A bag of AI tools.
-
 # Milestones
 
 ## Release the minimum version
