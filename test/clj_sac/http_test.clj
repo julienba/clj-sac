@@ -1,5 +1,5 @@
 (ns clj-sac.http-test
-  (:require [clojure.test :refer :all]
+  (:require [clojure.test :refer [deftest testing is]]
             [clj-sac.http :as http]
             [hato-http-fake.fake :as http-fake]))
 

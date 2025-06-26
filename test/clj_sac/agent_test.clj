@@ -1,5 +1,5 @@
 (ns clj-sac.agent-test
-  (:require [clojure.test :refer :all]
+  (:require [clojure.test :refer [deftest testing is]]
             [clj-sac.agent :as agent2]
             [clj-sac.llm.http.mistral :as mistral]
             [clojure.java.io :as io]

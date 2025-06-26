@@ -4,8 +4,7 @@
   (:require [cheshire.core :as json]
             [clj-sac.http :as http]
             [clojure.string :as string]
-            [clojure.core.async :as a]
-            [hato.client :as hato.http]))
+            [clojure.core.async :as a]))
 
 (def TOKEN (System/getenv "WF_MISTRAL_KEY"))
 
