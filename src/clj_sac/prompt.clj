@@ -42,8 +42,3 @@
     {:meta meta
      :template template
      :render (fn [vars] (render-prompt template vars))}))
-
-;; Example usage in REPL:
-;; (def p (load-prompt "resources/example.prompt"))
-;; (:meta p)
-;; ((:render p) {:text "John Doe is a 35-year-old software engineer living in New York."})
