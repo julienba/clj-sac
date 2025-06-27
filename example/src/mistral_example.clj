@@ -1,8 +1,9 @@
 (ns mistral-example
-  (:require
-   [cheshire.core :as json]
-   [clj-sac.llm.http.mistral :as mistral]
-   [clojure.core.async :as a]))
+  (:require [cheshire.core :as json]
+            [clj-sac.llm.http.mistral :as mistral]
+            [clj-sac.llm.http.util :as util]
+            [clj-sac.prompt :as prompt]
+            [clojure.core.async :as a]))
 
 (def TOKEN (System/getenv "WF_MISTRAL_KEY"))
 
@@ -252,3 +253,30 @@
 
   (streaming-with-tools-example))
 
+(defn parse-mistral-json-response [response]
+  (let [content (get-in response [:body :choices 0 :message :content])
+        json-str (util/extract-json-from-content content)]
+    (when json-str
+      (json/parse-string json-str true))))
+
+(defn run-mistral-prompt-example
+  "Loads resources/example.prompt, renders it with a sample text, sends to Mistral, prints the response."
+  ([] (run-mistral-prompt-example "Barack Obama was born in 1961 and served as President."))
+  ([sample-text]
+   (let [prompt-path "resources/example.prompt"
+         {:keys [render meta] :as other} (prompt/load-prompt prompt-path)
+         rendered (render {:text sample-text})
+         response-format (when (= (get-in meta [:output :format]) "json")
+                           {:type "json"})
+         response (mistral/chat-completion
+                   (cond-> {:messages [{:role "user" :content rendered}]
+                            :model "mistral-large-latest"}
+                     response-format (assoc :response_format response-format))
+                   {:headers {"Authorization" (str "Bearer " TOKEN)}})]
+     (println "rendered:" other)
+     (println "Prompt sent:\n" rendered)
+     (println "\nMistral response:")
+     (println (json/encode (:body response) {:pretty true}))
+     (println "Parsed JSON:" (parse-mistral-json-response response)))))
+
+(run-mistral-prompt-example)

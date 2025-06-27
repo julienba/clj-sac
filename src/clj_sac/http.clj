@@ -55,6 +55,7 @@
         _ (tap> {:debug-http-request {:url url
                                       :params params
                                       :body body}})
+        _ (println "[HTTP POST]" url "\nHeaders:" headers "\nBody:" (pr-str body))
         raw-response (http/post url params)
         response (cond-> raw-response
                    ;; For non-json or when we need to parse json manually

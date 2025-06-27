@@ -3,13 +3,14 @@
             [clj-sac.prompt :as sut]))
 
 (deftest test-load-prompt
-  (let [p (sut/load-prompt "resources/example.prompt")]
+  (let [p (sut/load-prompt "resources/example.prompt")
+        expected "Extract the requested information from the given text. If a piece of information\nis not present, omit that field from the output.\nReply in JSON following the format sent.\n\nText: John Doe is a 35-year-old software engineer living in New York."]
     (is (= (:model (:meta p)) "googleai/gemini-1.5-pro"))
     (is (= (get-in (:meta p) [:input :schema :text]) "string"))
     (is (string? (:template p)))
     (is (re-find #"Text: \{\{text\}\}" (:template p)))
     (is (= ((:render p) {:text "John Doe is a 35-year-old software engineer living in New York."})
-           "Extract the requested information from the given text. If a piece of information\nis not present, omit that field from the output.\n\nText: John Doe is a 35-year-old software engineer living in New York."))))
+           expected))))
 
 (deftest test-nonexistent-file
   (is (thrown? java.io.FileNotFoundException
@@ -29,10 +30,11 @@
                           (render {})))))
 
 (deftest test-extra-variable
-  (let [p (sut/load-prompt "resources/example.prompt")]
+  (let [p (sut/load-prompt "resources/example.prompt")
+        expected "Extract the requested information from the given text. If a piece of information\nis not present, omit that field from the output.\nReply in JSON following the format sent.\n\nText: foo"]
     ;; Extra variables are ignored, but required variable must be present and non-nil
     (is (= ((:render p) {:text "foo" :extra "bar"})
-           "Extract the requested information from the given text. If a piece of information\nis not present, omit that field from the output.\n\nText: foo"))
+           expected))
     (is (thrown-with-msg? clojure.lang.ExceptionInfo
                           #"Missing template variables:.*text.*"
                           ((:render p) {:text nil :extra "bar"})))))

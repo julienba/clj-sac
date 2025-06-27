@@ -13,5 +13,6 @@ output:
 
 Extract the requested information from the given text. If a piece of information
 is not present, omit that field from the output.
+Reply in JSON following the format sent.
 
 Text: {{text}}
