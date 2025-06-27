@@ -12,30 +12,18 @@ See examples directory
 Implement mistral and Claude using hato. Both sync and async. With schema.
 No protocol yet.
 
-## Add examples
 
-Create an example folder the include call to each.
-Create agentic like example inspired by the Anthropic paper using Clojure as glue
+## Example of DIY Agent
 
-## Add Gemini support
-
-## Introduce a protocol that abstract which LLM is used
-
-## Add support for multi modality
-Image, etc.
+`clj-sac.agent` contains one example of simple agent using LLM and applying tools until reaching an outcome.
 
 ## Future ideas
+
+### Introduce a protocol that abstract which LLM is used
 
 ### Add more LLMs support
 
 Obviously.
 
-### Start a prompt management system
-
-Inspired by the Clojure repository that store prompt.
-Add facility to read and write prompt
-
-
-### Start an orchestration namespace
-
-See Notion description
+### Add support for multi modality
+Image, etc.
