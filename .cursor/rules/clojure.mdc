@@ -1,6 +1,6 @@
 ---
 description: Clojure code style and best practices
-globs: "*.clj,*.cljc","*.cljs"
+globs: "*.clj,*.cljc,*.cljs"
 alwaysApply: false
 ---
 
