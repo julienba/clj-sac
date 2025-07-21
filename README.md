@@ -1,6 +1,9 @@
 # Description
 This project is a Clojure toolbox for developing with LLMs
 
+# Status
+Experimental. Use at your own risk.
+
 # Features
 
 See examples directory
