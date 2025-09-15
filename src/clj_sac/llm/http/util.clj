@@ -6,6 +6,13 @@
     (if match
       (second match)
       ;; fallback: try to find the first { ... } block
-      (let [brace-re #"(?s)(\{.*\})"
-            brace-match (re-find brace-re content)]
+      (let [brace-match (re-find #"(?s)(\{.*\})" content)]
         (second brace-match)))))
+
+(defn extract-clojure-from-content
+  "When using keep in mind that evaluating code from a non-deterministc LLM is a security risk."
+  [content]
+  (when content
+    (when-let [match (re-find #"(?s)```clojure\n(.*?)\n```" content)]
+      (when match
+        (second match)))))
