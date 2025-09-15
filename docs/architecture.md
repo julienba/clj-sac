@@ -31,14 +31,14 @@ LLM clients are organized in the `llm/http` directory, with each provider having
 - **Type Safety**: Malli schemas provide runtime type checking
 - **Error Messages**: Detailed validation errors help identify issues quickly
 
-### Agent Framework (`clj-sac.agent`)
+### Agent Namespace (`clj-sac.agent`)
 - **Naive implementation _not production ready_**
 - Implements OODA Loop (Observe-Orient-Decide-Act) pattern
 - Tool integration for function calling
 - Conversation memory management
 - Configurable iteration and memory limits
 
-### Tool System (`clj-sac.tool`)
+### Tool Namespace (`clj-sac.tool`)
 - **Naive implementation _not production ready_**
 
 ## Design Principles
