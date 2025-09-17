@@ -52,10 +52,10 @@
                         :connect-timeout (or timeout default-timeout)}
                  headers (assoc :headers headers)
                  parse-json? (assoc :as :json))
-        _ (tap> {:debug-http-request {:url url
-                                      :params params
-                                      :body body}})
-        _ (println "[HTTP POST]" url "\nHeaders:" headers "\nBody:" (pr-str body))
+;;        _ (tap> {:debug-http-request {:url url
+;;                                      :params params
+;;                                      :headers headers
+;;                                      :body body}})
         raw-response (http/post url params)
         response (cond-> raw-response
                    ;; For non-json or when we need to parse json manually
