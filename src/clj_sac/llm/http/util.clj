@@ -16,3 +16,16 @@
     (when-let [match (re-find #"(?s)```clojure\n(.*?)\n```" content)]
       (when match
         (second match)))))
+
+(defn extract-json-from-markdown
+  "Extract JSON (object or array) from LLM response, handling markdown code blocks"
+  [content]
+  (when content
+    (let [;; Try to match ```json or ``` code block with array or object
+          code-block-re #"(?s)```(?:json)?\s*([{\[].*?[}\]])\s*```"
+          match (re-find code-block-re content)]
+      (if match
+        (second match)
+        ;; Fallback: try to find the first {...} or [...] block
+        (let [json-match (re-find #"(?s)([{\[].*?[}\]])" content)]
+          (second json-match))))))
