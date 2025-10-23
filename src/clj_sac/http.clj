@@ -83,6 +83,48 @@
         (throw (ex-info (str (:status response) " response status for " url)
                         full-response))))))
 
+(def POST post)
+
+(defn GET
+  [url query-params {:keys [headers parse-json? schemas statuses-handlers timeout]
+                     :or {parse-json? true}}]
+  (assert url)
+  (let [{:keys [request-schema response-schema response-header-schema]} schemas
+        _ (when request-schema
+            (validate-schema! "Invalid request schema" request-schema query-params))
+        params (cond-> {:query-params query-params
+                        :throw-exceptions false
+                        :timeout (or timeout default-timeout)
+                        :connect-timeout (or timeout default-timeout)}
+                 headers (assoc :headers headers)
+                 parse-json? (assoc :as :json))
+        raw-response (http/get url params)
+        response (cond-> raw-response
+                   ;; For non-json or when we need to parse json manually
+                   (and (:body raw-response)
+                        (not parse-json?))
+                   (update :body #(json/parse-string % true)))
+        full-response {:url url
+                       :headers headers
+                       :params params
+                       :response response}]
+    (if (= 200 (:status response))
+      (do
+        (when response-schema
+          (validate-schema! "Invalid response schema" response-schema (:body response)))
+
+        (cond-> response
+          response-header-schema (assoc :headers (validate-schema! "Invalid response header schema"
+                                                                   response-header-schema
+                                                                   (coerce-response-headers (:headers response) response-header-schema)))))
+      (if-let [status-handler (clojure.core/get statuses-handlers (:status response))]
+        (status-handler {:url url
+                         :headers headers
+                         :params params
+                         :response response})
+        (throw (ex-info (str (:status response) " response status for " url)
+                        full-response))))))
+
 (defn- parse-sse-event
   "Parse a Server-Sent Event into a Clojure data structure"
   [raw-event]
