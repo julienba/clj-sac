@@ -4,6 +4,7 @@ Tired of re-implementing the same HTTP client for your accessing LLM provider? T
 
 ## Status
 Experimental. Use at your own risk.
+For a more production toolkit, you should look for [langchain4j](https://github.com/langchain4j/langchain4j)
 
 ## Features
 
