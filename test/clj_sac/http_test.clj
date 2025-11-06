@@ -39,3 +39,39 @@
           (is (= "validated" (:message (:body response))))
           (is (= 200 (:status (:body response)))))))))
 
+(deftest test-get-success
+  (testing "GET request with successful response"
+    (http-fake/with-fake-routes-in-isolation
+      {#"https://api.example.com/.*"
+       {:get (fn [_req]
+               {:status 200
+                :headers {"Content-Type" "application/json"}
+                :body "{\"message\": \"success\", \"data\": 456}"})}}
+
+      (let [response (http/GET "https://api.example.com/test"
+                       {:query "param"}
+                       {:parse-json? true})]
+        (is (= 200 (:status response)))
+        (is (= "success" (:message (:body response))))
+        (is (= 456 (:data (:body response))))))))
+
+(deftest test-get-with-schemas
+  (testing "GET request with request and response schema validation"
+    (let [request-schema [:map [:query string?]]
+          response-schema [:map [:message string?] [:count int?]]]
+
+      (http-fake/with-fake-routes-in-isolation
+        {#"https://api.example.com/.*"
+         {:get (fn [_]
+                 {:status 200
+                  :headers {"Content-Type" "application/json"}
+                  :body "{\"message\": \"retrieved\", \"count\": 42}"})}}
+
+        (let [response (http/GET "https://api.example.com/query"
+                         {:query "search-term"}
+                         {:schemas {:request-schema request-schema
+                                    :response-schema response-schema}})]
+          (is (= 200 (:status response)))
+          (is (= "retrieved" (:message (:body response))))
+          (is (= 42 (:count (:body response)))))))))
+
