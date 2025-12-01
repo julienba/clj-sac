@@ -45,5 +45,4 @@ LLM clients are organized in the `llm/http` directory, with each provider having
 
 1. **Schema-First**: Every LLM client should include comprehensive schemas for validation and documentation
 2. **Provider Abstraction**: Each provider is self-contained with its own client and schema files
-3. **Error Handling**: Detailed error messages and validation for better debugging
-4. **Streaming Support**: Built-in support for Server-Sent Events where available
+3. **Streaming Support**: Built-in support for Server-Sent Events where available
