@@ -5,12 +5,9 @@
   org.clojure/core.async {:mvn/version "1.8.741"}
 
   ; utils
-  funcool/promesa {:mvn/version "11.0.678"}
   metosin/malli {:mvn/version "0.20.0"}
   cheshire/cheshire {:mvn/version "6.1.0"}
   hato/hato {:mvn/version "1.0.0"}
-  clj-commons/clj-yaml {:mvn/version "1.0.29"}
-  selmer/selmer {:mvn/version "1.12.69"}
   com.github.julienba/clj-dot-prompt {:git/sha "3ee088914ca7d05725adf2e1570a36f5e585aa6f"}
 
   ;; logging
