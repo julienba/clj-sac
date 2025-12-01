@@ -11,6 +11,7 @@
   hato/hato {:mvn/version "1.0.0"}
   clj-commons/clj-yaml {:mvn/version "1.0.29"}
   selmer/selmer {:mvn/version "1.12.69"}
+  com.github.julienba/clj-dot-prompt {:git/sha "3ee088914ca7d05725adf2e1570a36f5e585aa6f"}
 
   ;; logging
   org.clojure/tools.logging {:mvn/version "1.3.0"}

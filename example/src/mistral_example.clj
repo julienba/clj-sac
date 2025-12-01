@@ -1,8 +1,8 @@
 (ns mistral-example
   (:require [cheshire.core :as json]
+            [clj-dot-prompt.core :as prompt]
             [clj-sac.llm.http.mistral :as mistral]
             [clj-sac.llm.http.util :as util]
-            [clj-sac.prompt :as prompt]
             [clojure.core.async :as a]))
 
 (def TOKEN (System/getenv "WF_MISTRAL_KEY"))
@@ -11,7 +11,7 @@
   (mistral/chat-completion
    {:messages [{:content "Write me a small haiku about Amsterdam"
                 :role "user"}]
-    :model "mistral-large-latest"}
+    :model "mistral-small-latest"}
    {:headers {"Authorization" (str "Bearer " TOKEN)}}))
 
 
