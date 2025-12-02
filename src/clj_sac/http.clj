@@ -1,14 +1,15 @@
 (ns clj-sac.http
   (:require
-   [hato.client :as http]
+   [clojure.core.async :as a]
+   [clojure.string :as string]
    [cheshire.core :as json]
+   [hato.client :as http]
    [malli.core :as m]
    [malli.error :as me]
-   [malli.transform :as mt]
-   [clojure.core.async :as a]
-   [clojure.string :as string]))
+   [malli.transform :as mt])
+  (:import (java.util.concurrent CompletableFuture)))
 
-(defn validate-schema! [error-msg schema-or-fn data]
+(defn- validate-schema! [error-msg schema-or-fn data]
   (if (vector? schema-or-fn)
     (if (m/validate schema-or-fn data)
       data
@@ -38,28 +39,24 @@
                string->keyword-transformer
                mt/string-transformer))))
 
-(defn post
-  [url body {:keys [headers parse-json? schemas statuses-handlers timeout]
-             :or {parse-json? true}}]
-  (assert url)
-  (let [{:keys [request-schema response-schema response-header-schema]} schemas
-        _ (when request-schema
-            (validate-schema! "Invalid request schema" request-schema body))
-        params (cond-> {:content-type :json
-                        :form-params body
-                        :throw-exceptions false
-                        :timeout (or timeout default-timeout)
-                        :connect-timeout (or timeout default-timeout)}
-                 headers (assoc :headers headers)
-                 parse-json? (assoc :as :json))
-;;        _ (tap> {:debug-http-request {:url url
-;;                                      :params params
-;;                                      :headers headers
-;;                                      :body body}})
-        raw-response (http/post url params)
-        response (cond-> raw-response
+(defn- java-future->chan
+  "Converts a CompletableFuture to a core.async channel.
+   Returns a channel that will receive the result or the exception."
+  [^CompletableFuture cf {:keys [on-success]}]
+  (let [c (a/chan 1)]
+    (.whenComplete cf
+                   (reify java.util.function.BiConsumer
+                     (accept [_ result exception]
+                       (a/put! c (if result
+                                   [:result (on-success result)]
+                                   [:error {:exception exception}])))))
+    c))
+
+(defn- post-post-processing [url http-response {:keys [headers params parse-json? schemas statuses-handlers]}]
+  (let [{:keys [response-schema response-header-schema]} schemas
+        response (cond-> http-response
                    ;; For non-json or when we need to parse json manually
-                   (and (:body raw-response)
+                   (and (:body http-response)
                         (not parse-json?))
                    (update :body #(json/parse-string % true)))
         full-response {:url url
@@ -82,6 +79,31 @@
                          :response response})
         (throw (ex-info (str (:status response) " response status for " url)
                         full-response))))))
+
+(defn post
+  [url body {:keys [async? headers parse-json? schemas _statuses-handlers timeout]
+             :or {async? false
+                  parse-json? true}
+             :as opts}]
+  (assert url)
+  (let [{:keys [request-schema]} schemas
+        _ (when request-schema
+            (validate-schema! "Invalid request schema" request-schema body))
+        params (cond-> {:async? async?
+                        :content-type :json
+                        :form-params body
+                        :throw-exceptions false
+                        :timeout (or timeout default-timeout)
+                        :connect-timeout (or timeout default-timeout)}
+                 headers (assoc :headers headers)
+                 parse-json? (assoc :as :json))
+        _ (tap> {:debug-http-request {:url url
+                                      :params params
+                                      :headers headers
+                                      :body body}})]
+    (if async?
+      (java-future->chan (http/post url params) {:on-success post-post-processing})
+      (post-post-processing url (http/post url params) opts))))
 
 (def POST post)
 
