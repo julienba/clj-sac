@@ -47,6 +47,7 @@
     (.whenComplete cf
                    (reify java.util.function.BiConsumer
                      (accept [_ result exception]
+                       (prn ::java-future->chan result exception)
                        (a/put! c (if result
                                    [:result (on-success result)]
                                    [:error {:exception exception}])))))
