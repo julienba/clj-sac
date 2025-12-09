@@ -72,6 +72,10 @@
   (let [resp (<! (async-llm-call "Write me a small haiku about Amsterdam"))]
     (prn :resp resp)))
 
+
+(defn long-operation []
+  (Thread 2000))
+
 ;; TODO: reuse the result of the first response in the second
 ;; Make a version that use Mistral
 ;; Make a version that use Mistral with SSE
@@ -86,6 +90,7 @@
   (go
     (loop [current-state initial-state
            [step-fn & remaining] steps]
+      (prn ::execute-pipeline current-state)
       (if-not step-fn
         current-state ;; No more steps, return final result
         (let [;; Run the current step with retries
@@ -107,13 +112,19 @@
                                                          :role "user"}]))]
                        (prn :haiku-result result)
                        (assoc ctx :haiku-result result))))
-                 #_(fn [ctx]
-                   (prn :ctx2 ctx)
+                 (fn [ctx]
+                   (go
+                     (let [result (<! (async-llm-call2 [{:content "Write me a small haiku about Clojure"
+                                                         :role "user"}]))]
+                       (prn :haiku2 result)
+                       (assoc ctx :haiku2 result)))
+
+
                    #_(async-llm-call :both-prompt))]
-        ;;   steps [(fn [ctx] (go (let [response (<! (async-http-call {}))]
-        ;;                          (prn :response response)
-        ;;                          (assoc ctx :response response))))
-        ;;          #_(fn [ctx] (prn ::ctx ctx))]
+          ;;   steps [(fn [ctx] (go (let [response (<! (async-http-call {}))]
+          ;;                          (prn :response response)
+          ;;                          (assoc ctx :response response))))
+          ;;          #_(fn [ctx] (prn ::ctx ctx))]
           final-result (<! (execute-pipeline initial-context steps))]
       final-result)))
 
@@ -124,14 +135,12 @@
 
 (time
  (let [ch (run-flow)
-       timeout-ch (a/timeout (* 60 1000))
+       timeout-ch (a/timeout (* 120 1000))
        [result port] (a/alts!! [ch timeout-ch])]
 
    (if (= port timeout-ch)
      (println "Timed out! API took too long.")
      (println "Success:" result))))
-
-(+ 1 2)
 
 
 ;; (defn run-run-llm-flow []
@@ -226,30 +235,3 @@
               (if (instance? Exception resp-2)
                 (println "Chain failed at Step 2:" (.getMessage resp-2))
                 (println "Chain Complete! Final Result:" (:body resp-2))))))))))
-
-;; ---------
-
-(require '[clojure.core.async.flow :as flow])
-
-(def graph
-  {:request-1
-   {:run (fn [state inputs]
-           ;; You must manually return a channel here
-           (prn :req-1 state inputs)
-           (let [res (async-http-call {})]
-             res))
-    :out [:gemini-id]} ;; Declare what this unit outputs
-
-   :request-2
-   {:deps [:request-1] ;; Declare dependency explicitly
-    :run (fn [state {:keys [request-1]}] ;; Receive inputs from previous node
-           (prn :req-2 state request-1)
-           #_(let [id (-> request-1 :gemini-id)]
-             (future->chan (hc/post "..." {:form-params {:id id}})))
-           (let [res (async-http-call {})]
-             res))
-    :out [:final-result]}})
-
-(go
-  (let [result-chan (flow/start graph)]
-    (<! result-chan)))
