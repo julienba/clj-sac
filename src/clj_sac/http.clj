@@ -40,25 +40,27 @@
                mt/string-transformer))))
 
 (defn- java-future->chan
-  "Converts a CompletableFuture to a core.async channel.
-   Returns a channel that will receive the result or the exception."
+  "Converts a CompletableFuture to a core.async channel."
   [^CompletableFuture cf {:keys [on-success]}]
-  (let [c (a/chan 1)]
+  (let [c (a/promise-chan)]
     (.whenComplete cf
                    (reify java.util.function.BiConsumer
                      (accept [_ result exception]
-                       (prn ::java-future->chan result exception)
-                       (a/put! c (if result
-                                   [:result (on-success result)]
-                                   [:error {:exception exception}])))))
+                       (try
+                         (a/put! c (if exception
+                                     [:error {:exception exception}]
+                                     [:value (on-success result)]))
+                         (catch Exception e
+                           (a/put! c [:error {:exception e}]))))))
     c))
 
 (defn- post-post-processing [url http-response {:keys [headers params parse-json? schemas statuses-handlers]}]
+
   (let [{:keys [response-schema response-header-schema]} schemas
         response (cond-> http-response
                    ;; For non-json or when we need to parse json manually
                    (and (:body http-response)
-                        (not parse-json?))
+                        parse-json?)
                    (update :body #(json/parse-string % true)))
         full-response {:url url
                        :headers headers
@@ -81,7 +83,7 @@
         (throw (ex-info (str (:status response) " response status for " url)
                         full-response))))))
 
-(defn post
+(defn POST
   [url body {:keys [async? headers parse-json? schemas _statuses-handlers timeout]
              :or {async? false
                   parse-json? true}
@@ -98,15 +100,13 @@
                         :connect-timeout (or timeout default-timeout)}
                  headers (assoc :headers headers)
                  parse-json? (assoc :as :json))
-        _ (tap> {:debug-http-request {:url url
+        #__ #_(tap> {:debug-http-request {:url url
                                       :params params
                                       :headers headers
                                       :body body}})]
     (if async?
-      (java-future->chan (http/post url params) {:on-success post-post-processing})
+      (java-future->chan (http/post url params) {:on-success #(post-post-processing url % params)})
       (post-post-processing url (http/post url params) opts))))
-
-(def POST post)
 
 (defn GET
   [url query-params {:keys [headers parse-json? schemas statuses-handlers timeout]
@@ -198,7 +198,7 @@
     events))
 
 ;; TODO add schema check if possible
-(defn stream-post
+(defn stream-POST
   "Make a streaming POST request and return a channel with SSE events"
   [url body {:keys [headers parse-event] :as _opts}]
   (assert url)

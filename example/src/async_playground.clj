@@ -130,23 +130,6 @@
             (println "Workflow Failed:" val)
             (println "Workflow Success!" val)))))))
 
-#_(defn execute-with-global-timeout
-  "Executes the task chain, but aborts if the total time exceeds timeout-ms."
-  [initial-val task-fns timeout-ms]
-  (go
-    (let [work-ch (chain-futures initial-val task-fns)
-          timeout-ch (timeout timeout-ms)
-          ;; alts! waits for the FIRST channel to return a value
-          [val port] (alts! [work-ch timeout-ch])]
-
-      (if (= port work-ch)
-        ;; Case 1: Work finished before timeout
-        val
-
-        ;; Case 2: Timeout finished before work
-        (let [msg (str "Global timeout of " timeout-ms "ms exceeded.")]
-          (ex-info msg {:type :timeout}))))))
-
 ;; Run it
 (comment
   (run-demo))

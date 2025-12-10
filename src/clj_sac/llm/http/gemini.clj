@@ -37,7 +37,7 @@
         request-body (cond-> {:contents contents
                               :generationConfig {:temperature temperature}}
                        max-tokens (assoc-in [:generationConfig :maxOutputTokens] max-tokens))]
-    (http/post url
+    (http/POST url
                request-body
                (merge {:parse-json? true
                        :schemas {:response-schema schema/CompletionResponse}}

@@ -2,8 +2,7 @@
  :deps
  {;; core
   org.clojure/clojure {:mvn/version "1.12.3"}
-  org.clojure/core.async {:mvn/version "1.9.829-alpha2"}
-  ;1.9.808-alpha1
+  org.clojure/core.async {:mvn/version "1.8.741"}
 
   ; utils
   metosin/malli {:mvn/version "0.20.0"}
