@@ -54,33 +54,27 @@
                            (a/put! c [:error {:exception e}]))))))
     c))
 
-(defn- post-post-processing [url http-response {:keys [headers params parse-json? schemas statuses-handlers]}]
-
+(defn- post-post-processing [url http-response {:keys [headers params schemas statuses-handlers]}]
   (let [{:keys [response-schema response-header-schema]} schemas
-        response (cond-> http-response
-                   ;; For non-json or when we need to parse json manually
-                   (and (:body http-response)
-                        parse-json?)
-                   (update :body #(json/parse-string % true)))
         full-response {:url url
                        :headers headers
                        :params params
-                       :response response}]
-    (if (= 200 (:status response))
+                       :response http-response}]
+    (if (= 200 (:status http-response))
       (do
         (when response-schema
-          (validate-schema! "Invalid response schema" response-schema (:body response)))
+          (validate-schema! "Invalid response schema" response-schema (:body http-response)))
 
-        (cond-> response
+        (cond-> http-response
           response-header-schema (assoc :headers (validate-schema! "Invalid response header schema"
                                                                    response-header-schema
-                                                                   (coerce-response-headers (:headers response) response-header-schema)))))
-      (if-let [status-handler (get statuses-handlers (:status response))]
+                                                                   (coerce-response-headers (:headers http-response) response-header-schema)))))
+      (if-let [status-handler (get statuses-handlers (:status http-response))]
         (status-handler {:url url
                          :headers headers
                          :params params
-                         :response response})
-        (throw (ex-info (str (:status response) " response status for " url)
+                         :response http-response})
+        (throw (ex-info (str (:status http-response) " response status for " url)
                         full-response))))))
 
 (defn POST

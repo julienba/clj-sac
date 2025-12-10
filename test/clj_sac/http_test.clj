@@ -12,7 +12,7 @@
                  :headers {"Content-Type" "application/json"}
                  :body "{\"message\": \"success\", \"data\": 123}"})}}
 
-      (let [response (http/post "https://api.example.com/test"
+      (let [response (http/POST "https://api.example.com/test"
                                 {:test "data"}
                                 {:parse-json? true})]
         (is (= 200 (:status response)))
@@ -31,7 +31,7 @@
                    :headers {"Content-Type" "application/json"}
                    :body "{\"message\": \"validated\", \"status\": 200}"})}}
 
-        (let [response (http/post "https://api.example.com/validate"
+        (let [response (http/POST "https://api.example.com/validate"
                                   {:name "John" :age 30}
                                   {:schemas {:request-schema request-schema
                                              :response-schema response-schema}})]

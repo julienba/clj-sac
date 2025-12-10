@@ -1,4 +1,4 @@
-(ns chaining2
+(ns chaining
   (:require [clj-sac.llm.http.mistral :as mistral]
             [clojure.core.async :as a :refer [go go-loop <!]]))
 
@@ -64,6 +64,8 @@
    {:async? true
     :headers {"Authorization" (str "Bearer " TOKEN)}}))
 
+(def demo-response (atom nil))
+
 (defn run-demo []
   (let [workflow [{:id :haiku
                    :fn (fn [_ctx]
@@ -82,7 +84,7 @@
             timeout-ch (a/timeout (* 2 60 1000))
             [val port] (a/alts! [working-ch timeout-ch])]
         (println "------------------- ")
-        (def VAL val)
+        (reset! demo-response val)
         (if (= port timeout-ch)
           (println "Timed out! API took too long.")
           (if (:error val)
@@ -98,9 +100,10 @@
 
 (comment
   ;; Single LLM call
+  (def response (atom nil))
   (go
     (let [resp (<! (async-llm-call [{:content "Write me a small haiku about Amsterdam"
                                      :role "user"}]))]
-      (println :response resp)
+      (reset! response resp)
       ))
   )

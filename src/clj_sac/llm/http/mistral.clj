@@ -22,8 +22,7 @@
                       max-tokens (assoc :max_tokens max-tokens)
                       tools (assoc :tools tools)
                       tool-choice (assoc :tool_choice tool-choice))]
-    (http/POST chat-url form-params (merge {:parse-json? true
-                                            :schemas {:request-schema schema/CompletionRequest
+    (http/POST chat-url form-params (merge {:schemas {:request-schema schema/CompletionRequest
                                                       ;:response-header-schema ResponseHeaders
                                                       :response-schema schema/CompletionResponse}}
                                            http-opts))))
