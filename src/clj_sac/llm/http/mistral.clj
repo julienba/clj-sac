@@ -22,8 +22,7 @@
                       max-tokens (assoc :max_tokens max-tokens)
                       tools (assoc :tools tools)
                       tool-choice (assoc :tool_choice tool-choice))]
-    (http/post chat-url form-params (merge {:parse-json? true
-                                            :schemas {:request-schema schema/CompletionRequest
+    (http/POST chat-url form-params (merge {:schemas {:request-schema schema/CompletionRequest
                                                       ;:response-header-schema ResponseHeaders
                                                       :response-schema schema/CompletionResponse}}
                                            http-opts))))
@@ -50,7 +49,7 @@
                       tool-choice (assoc :tool_choice tool-choice))
 
         ;; Create the SSE stream
-        sse-channel (http/stream-post chat-url
+        sse-channel (http/stream-POST chat-url
                                       (json/generate-string form-params)
                                       (merge {:headers {"Content-Type" "application/json"}
                                               :parse-event (fn [raw-event]

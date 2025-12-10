@@ -12,7 +12,3 @@
   (get-in answer [:body :candidates 0 :content :parts 0 :text])
   ; "Canals gently flow,\nBicycles glide on the bridges,\nDutch charm fills the air."
   )
-
-
-
-

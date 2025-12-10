@@ -1,4 +1,6 @@
 (ns clj-sac.agent
+  "Naive implementation of an agent.
+   For educational purpose"
   (:require [clj-sac.llm.http.mistral :as mistral]
             [clj-sac.tool :as tool]
             [clojure.data.json :as json]

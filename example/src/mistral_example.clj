@@ -279,4 +279,4 @@
      (println (json/encode (:body response) {:pretty true}))
      (println "Parsed JSON:" (parse-mistral-json-response response)))))
 
-(run-mistral-prompt-example)
+;(run-mistral-prompt-example)

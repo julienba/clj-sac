@@ -1,14 +1,15 @@
 (ns clj-sac.http
   (:require
-   [hato.client :as http]
+   [clojure.core.async :as a]
+   [clojure.string :as string]
    [cheshire.core :as json]
+   [hato.client :as http]
    [malli.core :as m]
    [malli.error :as me]
-   [malli.transform :as mt]
-   [clojure.core.async :as a]
-   [clojure.string :as string]))
+   [malli.transform :as mt])
+  (:import (java.util.concurrent CompletableFuture)))
 
-(defn validate-schema! [error-msg schema-or-fn data]
+(defn- validate-schema! [error-msg schema-or-fn data]
   (if (vector? schema-or-fn)
     (if (m/validate schema-or-fn data)
       data
@@ -38,52 +39,68 @@
                string->keyword-transformer
                mt/string-transformer))))
 
-(defn post
-  [url body {:keys [headers parse-json? schemas statuses-handlers timeout]
-             :or {parse-json? true}}]
+(defn- java-future->chan
+  "Converts a CompletableFuture to a core.async channel."
+  [^CompletableFuture cf {:keys [on-success]}]
+  (let [c (a/promise-chan)]
+    (.whenComplete cf
+                   (reify java.util.function.BiConsumer
+                     (accept [_ result exception]
+                       (try
+                         (a/put! c (if exception
+                                     [:error {:exception exception}]
+                                     [:value (on-success result)]))
+                         (catch Exception e
+                           (a/put! c [:error {:exception e}]))))))
+    c))
+
+(defn- post-post-processing [url http-response {:keys [headers params schemas statuses-handlers]}]
+  (let [{:keys [response-schema response-header-schema]} schemas
+        full-response {:url url
+                       :headers headers
+                       :params params
+                       :response http-response}]
+    (if (= 200 (:status http-response))
+      (do
+        (when response-schema
+          (validate-schema! "Invalid response schema" response-schema (:body http-response)))
+
+        (cond-> http-response
+          response-header-schema (assoc :headers (validate-schema! "Invalid response header schema"
+                                                                   response-header-schema
+                                                                   (coerce-response-headers (:headers http-response) response-header-schema)))))
+      (if-let [status-handler (get statuses-handlers (:status http-response))]
+        (status-handler {:url url
+                         :headers headers
+                         :params params
+                         :response http-response})
+        (throw (ex-info (str (:status http-response) " response status for " url)
+                        full-response))))))
+
+(defn POST
+  [url body {:keys [async? headers parse-json? schemas _statuses-handlers timeout]
+             :or {async? false
+                  parse-json? true}
+             :as opts}]
   (assert url)
-  (let [{:keys [request-schema response-schema response-header-schema]} schemas
+  (let [{:keys [request-schema]} schemas
         _ (when request-schema
             (validate-schema! "Invalid request schema" request-schema body))
-        params (cond-> {:content-type :json
+        params (cond-> {:async? async?
+                        :content-type :json
                         :form-params body
                         :throw-exceptions false
                         :timeout (or timeout default-timeout)
                         :connect-timeout (or timeout default-timeout)}
                  headers (assoc :headers headers)
                  parse-json? (assoc :as :json))
-;;        _ (tap> {:debug-http-request {:url url
-;;                                      :params params
-;;                                      :headers headers
-;;                                      :body body}})
-        raw-response (http/post url params)
-        response (cond-> raw-response
-                   ;; For non-json or when we need to parse json manually
-                   (and (:body raw-response)
-                        (not parse-json?))
-                   (update :body #(json/parse-string % true)))
-        full-response {:url url
-                       :headers headers
-                       :params params
-                       :response response}]
-    (if (= 200 (:status response))
-      (do
-        (when response-schema
-          (validate-schema! "Invalid response schema" response-schema (:body response)))
-
-        (cond-> response
-          response-header-schema (assoc :headers (validate-schema! "Invalid response header schema"
-                                                                   response-header-schema
-                                                                   (coerce-response-headers (:headers response) response-header-schema)))))
-      (if-let [status-handler (get statuses-handlers (:status response))]
-        (status-handler {:url url
-                         :headers headers
-                         :params params
-                         :response response})
-        (throw (ex-info (str (:status response) " response status for " url)
-                        full-response))))))
-
-(def POST post)
+        #__ #_(tap> {:debug-http-request {:url url
+                                      :params params
+                                      :headers headers
+                                      :body body}})]
+    (if async?
+      (java-future->chan (http/post url params) {:on-success #(post-post-processing url % params)})
+      (post-post-processing url (http/post url params) opts))))
 
 (defn GET
   [url query-params {:keys [headers parse-json? schemas statuses-handlers timeout]
@@ -175,7 +192,7 @@
     events))
 
 ;; TODO add schema check if possible
-(defn stream-post
+(defn stream-POST
   "Make a streaming POST request and return a channel with SSE events"
   [url body {:keys [headers parse-event] :as _opts}]
   (assert url)

@@ -33,6 +33,11 @@ Much of the client code can be generated automatically using Generative AI, but 
 If you have access to an LLM API that's not yet supported, your help in adding and testing a new client would be greatly appreciated and benefit everyone.
 Feel free to open issues, submit pull requests, or suggest improvements!
 
+## Changelog
+
+- Add an `async?` option to `clj-sac/http`, see example of usage [chaining.clj](example/src/chaining.clj)
+- Move the `clj-sac/prompt` to its own project [clj-dot-prompt](https://github.com/julienba/clj-dot-prompt)
+
 ## Future ideas
 
 ### Add more LLMs support
