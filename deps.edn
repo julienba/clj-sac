@@ -1,7 +1,7 @@
 {:paths ["src"]
  :deps
  {;; core
-  org.clojure/clojure {:mvn/version "1.12.3"}
+  org.clojure/clojure {:mvn/version "1.12.4"}
   org.clojure/core.async {:mvn/version "1.8.741"}
 
   ; utils
@@ -12,7 +12,7 @@
 
   ;; logging
   org.clojure/tools.logging {:mvn/version "1.3.0"}
-  ch.qos.logback/logback-classic {:mvn/version "1.5.21"}}
+  ch.qos.logback/logback-classic {:mvn/version "1.5.22"}}
 
  :aliases
  {:test {:extra-paths ["test"]
