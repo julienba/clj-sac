@@ -134,7 +134,7 @@
           response-header-schema (assoc :headers (validate-schema! "Invalid response header schema"
                                                                    response-header-schema
                                                                    (coerce-response-headers (:headers response) response-header-schema)))))
-      (if-let [status-handler (clojure.core/get statuses-handlers (:status response))]
+      (if-let [status-handler (get statuses-handlers (:status response))]
         (status-handler {:url url
                          :headers headers
                          :params params

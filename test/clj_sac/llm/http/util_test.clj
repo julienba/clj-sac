@@ -2,7 +2,8 @@
   (:require [clojure.test :refer [deftest testing is]]
             [clj-sac.llm.http.util :refer [extract-json-from-content
                                            extract-clojure-from-content
-                                           extract-json-from-markdown]]))
+                                           extract-json-from-markdown
+                                           with-retry]]))
 
 (deftest extract-json-from-content-test
   (testing "Extract JSON from markdown code block with json tag"
@@ -135,3 +136,93 @@
     (let [content "```json\n[{\"id\": 1, \"name\": \"Alice\"}, {\"id\": 2, \"name\": \"Bob\"}]\n```"]
       (is (= (extract-json-from-markdown content)
              "[{\"id\": 1, \"name\": \"Alice\"}, {\"id\": 2, \"name\": \"Bob\"}]")))))
+
+(deftest with-retry-test
+  (testing "Returns immediately on success (200)"
+    (let [call-count (atom 0)
+          mock-fn (fn []
+                    (swap! call-count inc)
+                    {:status 200 :body "success"})
+          retry-fn (with-retry mock-fn)]
+      (is (= {:status 200 :body "success"} (retry-fn)))
+      (is (= 1 @call-count))))
+
+  (testing "Retries on 503 and eventually succeeds"
+    (let [call-count (atom 0)
+          mock-fn (fn []
+                    (swap! call-count inc)
+                    (if (< @call-count 3)
+                      {:status 503 :body "Service Unavailable"}
+                      {:status 200 :body "success"}))
+          retry-fn (with-retry mock-fn {:backoff-ms 1 :jitter? false})]
+      (is (= {:status 200 :body "success"} (retry-fn)))
+      (is (= 3 @call-count))))
+
+  (testing "Retries on 429 (rate limit)"
+    (let [call-count (atom 0)
+          mock-fn (fn []
+                    (swap! call-count inc)
+                    (if (= @call-count 1)
+                      {:status 429 :body "Too Many Requests"}
+                      {:status 200 :body "success"}))
+          retry-fn (with-retry mock-fn {:backoff-ms 1 :jitter? false})]
+      (is (= {:status 200 :body "success"} (retry-fn)))
+      (is (= 2 @call-count))))
+
+  (testing "Returns error after max attempts exhausted"
+    (let [call-count (atom 0)
+          mock-fn (fn []
+                    (swap! call-count inc)
+                    {:status 503 :body "Service Unavailable"})
+          retry-fn (with-retry mock-fn {:max-attempts 3 :backoff-ms 1 :jitter? false})]
+      (is (= {:status 503 :body "Service Unavailable"} (retry-fn)))
+      (is (= 3 @call-count))))
+
+  (testing "Does not retry on non-retryable status codes"
+    (let [call-count (atom 0)
+          mock-fn (fn []
+                    (swap! call-count inc)
+                    {:status 400 :body "Bad Request"})
+          retry-fn (with-retry mock-fn {:backoff-ms 1})]
+      (is (= {:status 400 :body "Bad Request"} (retry-fn)))
+      (is (= 1 @call-count))))
+
+  (testing "Custom retryable statuses"
+    (let [call-count (atom 0)
+          mock-fn (fn []
+                    (swap! call-count inc)
+                    (if (= @call-count 1)
+                      {:status 418 :body "I'm a teapot"}
+                      {:status 200 :body "success"}))
+          retry-fn (with-retry mock-fn {:retryable-statuses #{418}
+                                        :backoff-ms 1
+                                        :jitter? false})]
+      (is (= {:status 200 :body "success"} (retry-fn)))
+      (is (= 2 @call-count))))
+
+  (testing "on-retry callback is called"
+    (let [retry-log (atom [])
+          mock-fn (fn []
+                    (if (< (count @retry-log) 2)
+                      {:status 503 :body "error"}
+                      {:status 200 :body "success"}))
+          retry-fn (with-retry mock-fn {:backoff-ms 1
+                                        :jitter? false
+                                        :on-retry (fn [attempt status _delay]
+                                                    (swap! retry-log conj {:attempt attempt :status status}))})]
+      (retry-fn)
+      (is (= [{:attempt 1 :status 503} {:attempt 2 :status 503}] @retry-log))))
+
+  (testing "Passes arguments to wrapped function"
+    (let [mock-fn (fn [a b] {:status 200 :body (+ a b)})
+          retry-fn (with-retry mock-fn)]
+      (is (= {:status 200 :body 5} (retry-fn 2 3)))))
+
+  (testing "Default options (no args) work"
+    (let [call-count (atom 0)
+          mock-fn (fn []
+                    (swap! call-count inc)
+                    {:status 200 :body "ok"})
+          retry-fn (with-retry mock-fn)]
+      (is (= {:status 200 :body "ok"} (retry-fn)))
+      (is (= 1 @call-count)))))
