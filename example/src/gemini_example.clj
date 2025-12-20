@@ -33,18 +33,12 @@
   (defn log-retry [{:keys [response]}]
     (prn "Retry after: " response))
 
-  ; Prevent an exception to be thrown
-  (def status-handlers {504 log-retry
-                        503 log-retry
-                        429 log-retry})
-
   ;; Use the wrapped function - retries automatically on 429, 503 and 504
   (def answer (chat-with-retry
                {:messages [{:content "Write me a small haiku about Amsterdam"
                             :role "user"}]
                 :model "gemini-2.5-flash"}
-               {:headers {"x-goog-api-key" TOKEN}
-                :status-handlers status-handlers}))
+               {:headers {"x-goog-api-key" TOKEN}}))
 
   (get-in answer [:body :candidates 0 :content :parts 0 :text])
   ;; => "Canals gently flow,\nBicycles glide on the bridges,\nDutch charm fills the air."

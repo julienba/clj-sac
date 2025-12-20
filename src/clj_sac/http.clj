@@ -55,11 +55,7 @@
     c))
 
 (defn- post-post-processing [url http-response {:keys [headers params schemas statuses-handlers]}]
-  (let [{:keys [response-schema response-header-schema]} schemas
-        full-response {:url url
-                       :headers headers
-                       :params params
-                       :response http-response}]
+  (let [{:keys [response-schema response-header-schema]} schemas]
     (if (= 200 (:status http-response))
       (do
         (when response-schema
@@ -74,8 +70,7 @@
                          :headers headers
                          :params params
                          :response http-response})
-        (throw (ex-info (str (:status http-response) " response status for " url)
-                        full-response))))))
+        http-response))))
 
 (defn POST
   [url body {:keys [async? headers parse-json? schemas _statuses-handlers timeout]
@@ -120,11 +115,7 @@
                    ;; For non-json or when we need to parse json manually
                    (and (:body raw-response)
                         (not parse-json?))
-                   (update :body #(json/parse-string % true)))
-        full-response {:url url
-                       :headers headers
-                       :params params
-                       :response response}]
+                   (update :body #(json/parse-string % true)))]
     (if (= 200 (:status response))
       (do
         (when response-schema
@@ -139,8 +130,7 @@
                          :headers headers
                          :params params
                          :response response})
-        (throw (ex-info (str (:status response) " response status for " url)
-                        full-response))))))
+        response))))
 
 (defn- parse-sse-event
   "Parse a Server-Sent Event into a Clojure data structure"

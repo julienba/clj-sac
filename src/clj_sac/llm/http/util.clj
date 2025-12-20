@@ -71,9 +71,7 @@
                     (println \"Retry\" attempt \"after status\" status))}))
 
    (chat-with-retry model-args http-args)
-   ```
-   To use in conjecture with a `status-handler {429 ...}` in http-args.
-   "
+   ```"
   ([f] (with-retry f {}))
   ([f {:keys [max-attempts retryable-statuses backoff-ms jitter? on-retry]
        :or {max-attempts 3
